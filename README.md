@@ -1,38 +1,33 @@
-# Web-Mobile-API Automation Framework
+# OmniAuto — Web-Mobile-API Automation Framework
 
-A single, enterprise-grade test automation framework covering **Web** (Selenium), **Mobile**
-(Appium), and **API** (REST Assured) — one framework core, one configuration model, one
-reporting pipeline, driven by TestNG. Built in 14 phases against the master prompt in
-[`requirement.md`](requirement.md), validated at every phase against real, live systems
-(a real web app, a real mobile app, a real API, a real account) rather than mocks.
+One framework covering **Web** (Selenium), **Mobile** (Appium), and **API** (REST Assured) —
+shared configuration, secrets, driver/context management, test data, logging, and reporting,
+driven entirely by TestNG command-line flags. No suite XML anywhere.
+
+**Stack:** JDK 17 · Maven · TestNG 7.10 · Selenium 4.25 · Appium 9.3 · REST Assured 5.5 ·
+Extent 5.1 + Allure 2.29 · Logback
 
 ## Contents
 
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Project structure](#project-structure)
-4. [Installation](#installation)
-5. [Maven commands](#maven-commands)
-6. [Environment configuration](#environment-configuration)
-7. [Secret configuration](#secret-configuration)
-8. [Test data management](#test-data-management)
-9. [Web automation example](#web-automation-example)
-10. [Mobile automation example](#mobile-automation-example)
-11. [API automation example](#api-automation-example)
-12. [API chaining example](#api-chaining-example)
-13. [Parallel execution](#parallel-execution)
-14. [Reporting](#reporting)
-15. [CI/CD](#cicd)
-16. [Adding a new test](#adding-a-new-test)
-17. [Adding a new page](#adding-a-new-page)
-18. [Adding a new API service](#adding-a-new-api-service)
-19. [Troubleshooting](#troubleshooting)
+4. [Setup](#setup)
+5. [Configuration](#configuration)
+6. [Test data](#test-data)
+7. [Running tests](#running-tests)
+8. [Examples](#examples)
+9. [Parallel execution](#parallel-execution)
+10. [Reporting](#reporting)
+11. [CI/CD](#cicd)
+12. [BrowserStack](#browserstack)
+13. [Writing tests](#writing-tests)
+14. [Thread safety](#thread-safety)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Overview
-
-Three automation surfaces, one framework:
 
 | Surface | Library | Package |
 |---|---|---|
@@ -40,11 +35,36 @@ Three automation surfaces, one framework:
 | Mobile | Appium | `com.framework.mobile` |
 | API | REST Assured | `com.framework.api` |
 
-All three sit on shared infrastructure: configuration (`com.framework.config`), secrets
-(`com.framework.secrets`), thread-safe driver/context management (`com.framework.driver`,
-`com.framework.context`), test data (`com.framework.testdata`), logging (SLF4J/Logback,
-Phase 10), and reporting (`com.framework.reporting`, Extent + Allure, Phase 11). Test code
-(`com.tests.*`) depends on the framework; the framework never depends on test code.
+Test code (`com.tests.*`) depends on the framework (`com.framework.*`); the framework never
+depends on test code.
+
+**Key ideas:**
+
+- **Thread-safety is load-bearing.** Every shared object is either immutable, a
+  concurrent-safe structure, or `ThreadLocal` — see [Thread safety](#thread-safety).
+- **One placeholder syntax everywhere.** `${{KEY}}` resolves against secrets, config, and
+  runtime/API context through a single `PlaceholderResolver`, in test data, request bodies,
+  anywhere text is resolved.
+- **No suite XML.** Class, method, group, browser, environment, parallel mode — all plain
+  `-D` flags. Picking a different subset is never a file edit.
+- **Zero boilerplate per test.** Retry, log-tagging, Extent/Allure reporting, and driver
+  cleanup are automatic via TestNG listeners.
+
+**Known limitations:**
+
+- **Mobile needs local infra** (emulator/simulator + Appium server) — not available on a
+  hosted CI runner, so `mobile` is excluded from CI by default. Use a self-hosted runner or
+  BrowserStack.
+- **Masking is opt-in per call site** — `SensitiveDataMasker` isn't wired into Logback
+  globally; a new log/report line touching a secret must call `.mask()` itself.
+- **`@DataProvider` rows can leak secrets into Allure.** `allure-testng` records every row via
+  its own `toString()`, bypassing the masker — give any row type with a secret field a custom
+  masking `toString()` (see `DataDrivenLoginTest.LoginAttempt`).
+- **A missing `alwaysRun = true` fails silently** — TestNG skips a `@BeforeMethod` with no
+  groups of its own whenever `-Dgroups=` is active, so its `@Test` runs unset-up (e.g. 401s).
+- **BrowserStack app upload is manual** — one-time per app version, via their own API.
+- **An empty `-Dgroups=X` match still reports `BUILD SUCCESS`** — always check the printed
+  test count.
 
 ## Architecture
 
@@ -61,43 +81,26 @@ Phase 10), and reporting (`com.framework.reporting`, Extent + Allure, Phase 11).
           +---------------+---------------+
                           |
                    FRAMEWORK CORE
-                          |
-     +--------------------+---------------------+
-     |          |          |         |          |
- Configuration Driver    Data     Logging   Reporting
- Management    Management Management           |
-     |          |          |         |          |
-     +----------+----------+---------+----------+
+      Configuration · Driver · Data · Logging · Reporting
                           |
                   Parallel Execution
 ```
-
-**Thread-safety is the load-bearing design constraint**, not an afterthought — every
-static/singleton object in the framework is classified as one of five categories
-(immutable-global, thread-safe-singleton, thread-local, test-scoped, suite-scoped) and lives
-up to that classification. The full audit, including two real bugs it caught, is in
-[`THREAD_SAFETY_AUDIT.md`](THREAD_SAFETY_AUDIT.md).
-
-**One variable-resolution mechanism spans the whole framework**: `${{KEY}}` resolves against
-secrets, configuration, and runtime/API-context values through the same
-`PlaceholderResolver`, in test data, request bodies, and anywhere else text is resolved — see
-[Secret configuration](#secret-configuration) and [API chaining example](#api-chaining-example).
 
 ## Project structure
 
 ```
 src/main/java/com/framework/
-    api/            ApiClient, ApiRequest, ApiResponse, ApiContext, ApiHeaders, ApiUtils
+    api/            ApiClient, ApiRequest/Response, ApiContext, ApiHeaders
         requests/   Request DTOs (Java records)
         responses/  Response DTOs (Java records)
         services/   AuthenticationService, EventService, BookingService
     config/         ConfigManager (4-tier precedence)
     constants/      ConfigKeys
     context/        VariableManager (thread-safe runtime variable store)
-    driver/         DriverFactory, DriverManager, WebDriverManager, MobileDriverManager
-    enums/          BrowserType, Environment, MobilePlatformType, ScreenshotMode
-    exceptions/     FrameworkException and its subtypes
-    listeners/      TestNG listeners - see the list below
+    driver/         DriverFactory, WebDriverManager, MobileDriverManager, MobilePortAllocator
+    enums/          BrowserType, Environment, MobilePlatformType, MobileDeviceProvider, ScreenshotMode
+    exceptions/     FrameworkException and subtypes
+    listeners/      TestNG listeners (see table below)
     mobile/         BaseMobilePage, BaseMobileComponent, MobileActions, MobileUtils, MobileWaits
     reporting/      ExtentManager, ExtentLoggingAppender, AllureManager, ReportManager
     secrets/        SecretManager, SensitiveDataMasker
@@ -106,188 +109,106 @@ src/main/java/com/framework/
     web/            BasePage, BaseComponent, WebActions, WebUtils, WebWaits
 
 src/test/java/com/tests/
-    api/            API tests (authentication, chaining, data-driven)
-    base/           Framework-level validation (config, secrets, masking, retry, test data)
-    mobile/         Mobile tests + Page Objects (Sauce Labs SwagLabs demo app)
-    web/            Web tests + Page Objects + Components (eventhub.rahulshettyacademy.com)
+    api/     API tests (authentication, chaining, data-driven)
+    base/    Framework-level validation (config, secrets, masking, retry, test data)
+    mobile/  Mobile tests + Page Objects (Sauce Labs SwagLabs demo app)
+    web/     Web tests + Page Objects + Components (eventhub.rahulshettyacademy.com)
 
-src/main/resources/
-    logback.xml     Console + rolling-file logging, MDC test-tagging
-    META-INF/services/org.testng.ITestNGListener   ServiceLoader-registered listeners
-
-src/test/resources/
-    testdata/       json/, yaml/, csv/, excel/ sample data files
-    (no suite XML - every run is driven by command-line flags; see Maven commands)
-
-config/             dev/qa/uat/staging.properties, each fully self-contained (no shared
-                    default.properties layer) - at the repo root, not under
-                    src/main/resources, so a tester can find and edit an environment file
-                    directly (wired into the classpath via pom.xml's <resources>, not just
-                    a copy - see Environment configuration)
+config/             dev/qa.properties + mobile-devices.json — repo root, not
+                    src/main/resources, so they're easy to find and edit; each
+                    {env}.properties file is fully self-contained
 apps/               Mobile binaries (swaglabs.apk, swag.app)
-THREAD_SAFETY_AUDIT.md, CI_CD.md, README.md   Documentation
-.github/workflows/, Jenkinsfile, .gitlab-ci.yml   CI/CD pipelines
+.github/workflows/  CI pipeline (GitHub Actions)
 ```
 
-**Listeners** (`com.framework.listeners`, all auto-registered via `META-INF/services`):
+**Listeners** (auto-registered via `META-INF/services`):
 
 | Listener | Job |
 |---|---|
 | `TestLoggingContextListener` | Tags every log line with `[ClassName.methodName]` via MDC |
-| `RetryAnalyzerTransformer` | Assigns `RetryAnalyzer` to every `@Test` automatically |
-| `ConfigParameterListener` | Bridges TestNG `<parameter>`s into `ConfigManager` |
+| `RetryAnalyzerTransformer` | Assigns `RetryAnalyzer` to every `@Test` |
+| `ConfigParameterListener` | Bridges TestNG `<parameter>`s into `ConfigManager`, reset before every method |
 | `ApiContextListener` | Clears API/runtime context around every test |
 | `DriverCleanupListener` | Quits WebDriver/AppiumDriver after every test |
 | `ExtentReportingListener` | Creates/finalizes the Extent report node per test |
 | `ScreenshotCaptureListener` | Captures + attaches a failure screenshot to both reports |
 
-Package-info Javadoc in each package documents intent; class-level Javadoc documents design
-decisions and, where relevant, the live bug that decision was found by fixing.
+## Setup
 
-**Note on a deliberate omission**: the target architecture (see `requirement.md` §4)
-suggests a `com.framework.logging` package with a `LoggerManager`. It was never built —
-SLF4J itself already serves as the logging facade the framework needs, `logback.xml` (Phase
-10) covers configuration, and `ExtentLoggingAppender`/`TestLoggingContextListener` (Phases
-10-11, in `reporting`/`listeners`) cover the integration work a `LoggerManager` would
-otherwise exist for. A wrapper class with no real job of its own would be exactly what
-requirement.md §28 warns against.
+**Required everywhere:** JDK 17+, Maven 3.9+, Git.
 
-## Installation
+**Web:** Chrome and/or Firefox — Selenium Manager resolves drivers automatically. Safari
+needs `safaridriver --enable` plus Safari > Develop > Allow Remote Automation (no headless
+mode).
 
-Prerequisites:
-- JDK 17+
-- Maven 3.9+
-- Chrome and/or Firefox (Web tests) - Selenium Manager, bundled with Selenium 4, resolves
-  the matching driver binary automatically; nothing to install separately.
-- Appium 3.x + an Android emulator/iOS simulator (Mobile tests only - see
-  [Troubleshooting](#troubleshooting))
+**Mobile:** Appium 3.x (`npm i -g appium`) with `uiautomator2` (Android) and/or `xcuitest`
+(iOS) drivers installed. Android needs a booted AVD emulator; iOS (macOS only) needs a booted
+Simulator.
 
 ```bash
-git clone <repo-url>
-cd web-mobile-api-framework
-cp .secret.env.example .secret.env   # fill in real values - see Secret configuration
-mvn clean compile
-```
-
-## Maven commands
-
-**No suite XML anywhere in this repo.** Every test-selection concern - an individual test or
-method, a group, several groups, exclusions, parallel mode/thread count, browser,
-environment - is a plain command-line `-D` flag against Surefire's own classpath-wide TestNG
-discovery. Picking a different subset is never a file edit:
-
-```bash
-# Compile
+git clone <repo-url> && cd OmniAuto
+cp .secret.env.example .secret.env   # fill in real values
 mvn clean compile
 
-# Default run: every group except mobile (no local emulator by default) and
-# frameworkSelfTest (a deliberately-always-failing test - see Troubleshooting)
-mvn test -DexcludedGroups=mobile,frameworkSelfTest
-
-# A specific environment/browser/group combination (the shape requirement.md's own
-# example uses)
-mvn clean test -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
-
-# A single test class
-mvn test -Dtest=AuthenticationTest
-
-# A single test method
-mvn test -Dtest=AuthenticationTest#loginWithExistingAccountWorks
-
-# Several test classes at once
-mvn test -Dtest=AuthenticationTest,EventBookingChainingTest
-
-# One or more groups (comma-separated) - smoke/sanity/regression/whatever groups your
-# @Test(groups = ...) tags actually use; nothing here is hardcoded
-mvn test -Dgroups=smoke
-mvn test -Dgroups=smoke,api
-
-# Sanity: the narrowest possible checkpoint - one representative live test per surface
-# (Web/Mobile/API), smaller than smoke (which also covers every framework-internal unit test)
-mvn test -Dgroups=sanity -DexcludedGroups=mobile
-
-# Resume mobile testing (emulator/Appium must be running - see Troubleshooting)
-mvn test -Dgroups=mobile
-
-# Real parallel execution - -Dparallel/-DthreadCount are plain Surefire/TestNG system
-# properties, confirmed live to genuinely parallelize whatever -Dgroups/-Dtest already
-# selected, no suite XML needed
-mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4
-
-# Validate RetryAnalyzer's behavior deliberately (this always shows one designed failure)
-mvn test -Dgroups=frameworkSelfTest
+# Mobile only, before -Dgroups=mobile: boot an emulator/simulator, then
+appium --base-path /wd/hub
 ```
 
-`-DexcludedGroups=mobile,frameworkSelfTest` is the closest thing to a canonical "everything
-green" command for this repo; see [Troubleshooting](#troubleshooting) for why both
-exclusions exist and are *not* accidental gaps.
+## Configuration
 
-## Environment configuration
+**Environment files** live in `config/` at the repo root (`dev`/`qa` `.properties` — the only
+two environments this repo currently exercises; add another by adding a constant to
+`Environment` plus its own `config/{env}.properties`), each fully self-contained — no shared
+`default.properties`. `qa` is the default when `-Denv` is omitted.
 
-Environment files live at **`config/` in the repo root** (`config/dev.properties`,
-`config/qa.properties`, `config/uat.properties`, `config/staging.properties`) - not nested
-under `src/main/resources`, so a tester can find and edit one directly. `pom.xml`'s
-`<resources>` puts it on the runtime classpath at build time; `ConfigManager` doesn't know or
-care that the physical source moved.
-
-**No shared `default.properties`** - each environment file is fully self-contained (one file
-to read, no hidden merge). **`qa` is the default environment** when `-Denv` isn't given.
-
-4-tier precedence (highest wins), all resolved through `ConfigManager`:
+4-tier precedence (highest wins):
 
 ```
-Test-specific override  (ConfigManager.setOverride, thread-local)
-        |
-TestNG <parameter>       (suite/test XML)
-        |
-System property          (-Dkey=value)
-        |
-config/{env}.properties  (qa by default; dev, uat, staging by -Denv=...)
+Test-specific override (ConfigManager.setOverride)  >  TestNG <parameter>  >
+System property (-Dkey=value)  >  config/{env}.properties
 ```
 
 ```bash
-mvn test                                    # qa.properties, no flag needed
+mvn test                                              # qa.properties
 mvn test -Denv=dev -Dbrowser=chrome -Dheadless=true   # any other environment
 ```
 
-An unsupported `env`, a missing `config/{env}.properties`, or a missing/blank required key
-(`browser`, `base.url`, `api.base.url`) throws `ConfigurationException` immediately at
-startup - never mid-test (requirement.md §31, fail-fast).
+A missing `config/{env}.properties` or a missing/blank required key (`browser`, `base.url`,
+`api.base.url`) throws immediately at startup, never mid-test.
 
-## Secret configuration
+**Secrets** — `.secret.env` (git-ignored, never commit it), overridden by real CI/CD
+environment variables:
 
-```bash
-cp .secret.env.example .secret.env
-```
+| Secret key | Used for |
+|---|---|
+| `EVENTHUB_EMAIL` / `EVENTHUB_PASSWORD` | eventhub.rahulshettyacademy.com test account (Web + API) |
+| `LOGIN_USERNAME` / `LOGIN_PASSWORD` | Generic sample credentials for framework self-tests |
+| `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` | Only when `mobile.device.provider=BROWSERSTACK` |
 
-```
-EVENTHUB_EMAIL=your-eventhub-account@example.com
-EVENTHUB_PASSWORD=your-eventhub-password
-```
-
-`.secret.env` is git-ignored and must never be committed. Precedence (highest wins):
-
-```
-CI/CD environment variable  (System.getenv, set as a GitHub/Jenkins/GitLab secret)
-        |
-.secret.env  (local development only)
-```
-
-Every value `SecretManager.get(...)` resolves is registered with `SensitiveDataMasker`
-automatically and masked everywhere the framework logs or reports text from then on -
-callers never remember to mask it themselves. One caveat isn't automatic, though: see
-[Troubleshooting](#troubleshooting)'s "masking is opt-in per call site" note.
-
-`${{KEY}}` placeholders in test data resolve against secrets, configuration, and runtime
-context through one shared `PlaceholderResolver`:
+Any value `SecretManager.get(...)` resolves is auto-masked in every subsequent log/report
+line. `${{KEY}}` placeholders resolve the same values in test data:
 
 ```json
 { "validLogin": { "email": "${{EVENTHUB_EMAIL}}", "password": "${{EVENTHUB_PASSWORD}}" } }
 ```
 
-## Test data management
+**Key properties** (full list in `ConfigKeys`):
 
-One entry point regardless of source format:
+| Group | Keys |
+|---|---|
+| General | `env`, `browser`, `headless`, `resolution`, `base.url`, `api.base.url` |
+| Web timeouts | `page.load.timeout`, `script.timeout`, `implicit.wait.timeout`, `explicit.wait.timeout`, `polling.interval` |
+| Screenshots | `screenshot.mode` — `FAILURE` \| `EVERY_ACTION` \| `DISABLED` |
+| API timeouts | `api.connection.timeout`, `api.socket.timeout` (ms) |
+| Retry | `retry.max.count` (default 1; never retries `AssertionError`) |
+| Test data | `testdata.format` — `json` (default) \| `yaml` \| `csv` \| `excel`, see [Test data](#test-data) |
+| Mobile platform | `mobile.platform` — `android`/`ios`, picks a list in `config/mobile-devices.json` for a sequential run |
+| Mobile app | `mobile.app.path.android`, `mobile.app.path.ios` — which app binary each platform installs |
+| Mobile misc | `mobile.automation.name`, `mobile.udid`, `mobile.app.package`, `mobile.app.activity`, `mobile.bundle.id`, `appium.server.url` |
+| Mobile provider | `mobile.device.provider` — `LOCAL` (default) \| `BROWSERSTACK` |
+| BrowserStack | `browserstack.server.url`, `browserstack.app.id`, `browserstack.project.name`, `browserstack.build.name` |
+
+## Test data
 
 ```java
 TestDataManager.load("login.json").get("validLogin", AuthRequest.class);
@@ -299,167 +220,219 @@ TestDataManager.load("events.csv").dataProvider(CreateEventRequest.class);
 | JSON | `testdata/json/` | Object-root (named records) or array-root |
 | YAML | `testdata/yaml/` | Same two shapes as JSON |
 | CSV | `testdata/csv/` | Row-oriented; a `name` column enables name lookup |
-| Excel | `testdata/excel/` | Same as CSV, first sheet, header row + data rows |
+| Excel | `testdata/excel/` | Same as CSV, first sheet |
 
-Each file's raw records are cached once (thread-safe, immutable); `${{...}}` placeholders
-resolve fresh on every access, not at load time - so a value produced by an earlier API call
-mid-test (e.g. `${{eventId}}`) still resolves correctly. See `TestData`'s Javadoc for the
-full reasoning, and `TestDataManagerTest`/`DataDrivenLoginTest`/`DataDrivenEventCreationTest`
-for real, live-validated usage of all four formats plus TestNG `@DataProvider` integration.
+Raw records are cached once; `${{...}}` placeholders resolve fresh on every access, so a
+value produced mid-test (e.g. `${{eventId}}`) resolves correctly.
 
-## Web automation example
+**Which format a bare name reads from is a config property, not hardcoded per call site.**
+`load("login.json")` always reads JSON, extension and all — but `load("login")`, with no
+extension, resolves against `testdata.format` in `config/{env}.properties` (`json` unless
+set):
+
+```properties
+testdata.format=json   # or yaml | csv | excel
+```
 
 ```java
-public class LoginTest {
-    @Test(groups = {"smoke", "web"})
-    public void validLoginNavigatesToHomePage() {
-        LoginPage loginPage = new LoginPage();
-        loginPage.open(ConfigManager.getBaseUrl())
-                .enterEmail(SecretManager.get("EVENTHUB_EMAIL"))
-                .enterPassword(SecretManager.get("EVENTHUB_PASSWORD"))
-                .clickLogin();
+TestDataManager.load("login");   // testdata.format=json -> testdata/json/login.json
+                                  // testdata.format=yaml -> testdata/yaml/login.yaml
+```
 
-        HomePage homePage = new HomePage();
-        assertTrue(homePage.isDisplayed());
-    }
+Override it per run the same way as any other key (`-Dtestdata.format=yaml`) or per test
+(`ConfigManager.setOverride(ConfigKeys.TEST_DATA_FORMAT, "yaml")`) to switch every
+extension-less `load(...)` call to a different source without touching test code.
+
+## Running tests
+
+```bash
+mvn clean compile
+
+# Default "everything green" run — excludes mobile (no local emulator by default) and
+# frameworkSelfTest (a deliberately-always-failing test, see Troubleshooting)
+mvn test -DexcludedGroups=mobile,frameworkSelfTest
+
+mvn clean test -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
+mvn test -Dtest=AuthenticationTest                              # one class
+mvn test -Dtest=AuthenticationTest#loginWithExistingAccountWorks # one method
+mvn test -Dtest=AuthenticationTest,EventBookingChainingTest      # several classes
+mvn test -Dgroups=smoke,api                                      # several groups
+mvn test -Dgroups=sanity -DexcludedGroups=mobile                 # one live test per surface
+mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4          # parallel
+mvn test -Dgroups=frameworkSelfTest                               # proves retries never mask an assertion
+```
+
+Real groups this codebase tags tests with: `smoke`, `sanity`, `api`, `web`, `mobile`,
+`frameworkSelfTest`. A group name nothing is tagged with matches zero tests but still reports
+`BUILD SUCCESS` — check the printed test count.
+
+**API** — every real class: `AuthenticationTest`, `DataDrivenLoginTest`,
+`DataDrivenEventCreationTest`, `EventBookingChainingTest`, `ApiContextChainingTest`.
+
+```bash
+mvn test -Dgroups=api                                              # every API test
+mvn test -Dgroups=smoke,api                                        # just the smoke-tagged ones
+mvn test -Dtest=AuthenticationTest                                 # one class
+mvn test -Dtest=AuthenticationTest#loginWithExistingAccountWorks    # one method
+mvn test -Dtest=AuthenticationTest,EventBookingChainingTest         # several classes
+mvn test -Dtest=DataDrivenLoginTest                                 # data-driven - every @DataProvider row runs
+mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4            # parallel, one class per thread
+mvn test -Dgroups=api -Dparallel=methods -DthreadCount=8            # parallel, one method per thread
+mvn test -Denv=dev -Dgroups=api                                     # against dev instead of qa
+```
+
+**Web** — every real class: `LoginTest`, `EventsTest`.
+
+```bash
+mvn test -Dgroups=web                                               # every Web test
+mvn test -Dgroups=smoke,web                                         # just the smoke-tagged ones
+mvn test -Dtest=LoginTest                                           # one class
+mvn test -Dtest=LoginTest#validLoginNavigatesToHomePage              # one method
+mvn test -Dtest=LoginTest,EventsTest                                 # several classes
+mvn test -Dtest=LoginTest#loginWorksAcrossMultipleBrowsers            # cross-browser data-driven, sequential rows
+mvn test -Dgroups=web -Dbrowser=firefox -Dheadless=true               # browser: chrome (default) | firefox | edge | safari
+mvn test -Dgroups=web -Dparallel=classes -DthreadCount=4 -Dheadless=true
+mvn test -Denv=dev -Dgroups=web -Dbrowser=chrome -Dheadless=true      # against dev instead of qa
+```
+
+**Mobile** — every real class: `LoginTest`, `ProductsTest`, `MultiDeviceParallelTest`. Device
+details are never passed on the CLI; whether it runs sequentially on one device or in
+parallel across several depends only on whether `-Dparallel` is present:
+
+```bash
+mvn test -Dgroups=mobile                                              # sequential, one device (android by default)
+mvn test -Dgroups=mobile -Dmobile.platform=ios                        # sequential, iOS instead - one line, no other flags
+mvn test -Dgroups=mobile -Dtest=LoginTest                             # one class
+mvn test -Dgroups=mobile -Dtest=LoginTest#validLoginNavigatesToProductsPage  # one method
+mvn test -Dgroups=mobile -Dtest=LoginTest,ProductsTest                # several classes
+mvn test -Dgroups=mobile -Dparallel=methods -DthreadCount=3           # pooled across every device (work queue)
+mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK ...    # real device / cloud farm, see BrowserStack
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachDeviceInTheMatrixConcurrently  # same test, every device at once
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently
+mvn test -Denv=dev -Dgroups=mobile                                    # against dev instead of qa
+```
+
+Every device the framework knows about lives in one shared file, `config/mobile-devices.json`
+— not `config/{env}.properties`, and not duplicated per environment, since the same local
+emulator/simulator is used regardless of `-Denv`:
+
+```json
+{
+  "devices": {
+    "android1": { "platform": "android", "deviceName": "Pixel_10", "platformVersion": "17" },
+    "ios1": { "platform": "ios", "deviceName": "iPhone 17 Pro", "platformVersion": "26.2" },
+    "ios2": { "platform": "ios", "deviceName": "iPhone 17", "platformVersion": "26.2" }
+  },
+  "androidList": ["android1"],
+  "iosList": ["ios1", "ios2"],
+  "matrices": { "cross-platform": ["android1", "ios1"], "ios": ["ios1", "ios2"] },
+  "ports": { "systemPort": { "start": 8200, "count": 50 } }
 }
 ```
 
-Page Objects extend `BasePage`, expose business-level actions (never raw
-`driver.findElement(...)`), and log each step (`logger.info("Entering email")`) - which
-Phase 11's `ExtentLoggingAppender` then mirrors into the Extent report automatically, with no
-extra reporting code. See `src/test/java/com/tests/web/`.
+- **Sequential** (`mvn test -Dgroups=mobile`, no `-Dparallel`): `mobile.platform` in
+  `config/{env}.properties` (`android` or `ios`) picks `androidList`/`iosList`, and the first
+  id in that list is used for every test. Switch platform with a one-line config edit — no
+  `-D` device flags, no code change. (An explicit `-Dmobile.platform=...`/`-Dmobile.device.name=...`
+  still overrides everything for a genuine one-off, but it's never required.)
+- **Parallel** (`-Dparallel` present, any mode/thread count): every test is distributed across
+  `androidList` + `iosList` combined as a work queue — whichever device finishes first picks
+  up the next queued test, not "one device per thread regardless of load," and not "the same
+  test on every device" (that's the `matrices` case below). Existing test classes
+  (`LoginTest`, `ProductsTest`, ...) need no changes to participate.
+- **Which app binary** each platform installs is an environment/build concern, so it's in
+  `config/{env}.properties`, not the JSON file: `mobile.app.path.android`,
+  `mobile.app.path.ios` — one entry per platform, since every device on that platform runs the
+  same build.
+- **Same test on every device at once** (a *matrix*, not a work queue — the last two commands
+  in the list above): `matrices` is a comma-separated list of ids from the same `devices` map
+  — a device used by more than one matrix is still declared only once.
 
-## Mobile automation example
+Add a device, a new matrix, or point `androidList`/`iosList`/`mobile.platform` at a different
+one, by editing `config/mobile-devices.json` (devices/lists/matrices) or
+`config/{env}.properties` (`mobile.platform`) — no code to touch. See
+`com.framework.driver.MobileDeviceMatrix`.
+
+**Appium ports:** `appium.server.url` (`http://127.0.0.1:4723/wd/hub` by default) is the
+*one* Appium server every `LOCAL` session — sequential, pooled, or matrix — connects through;
+one HTTP port legitimately serving many concurrent sessions is normal, the same as any web
+server. Each individual session then gets its own separate, per-session automation port on
+top of that: `systemPort` for Android (UiAutomator2, from `8200`), `wdaLocalPort` for iOS
+(XCUITest, from `8100`), and `chromedriverPort` for an Android device whose JSON entry sets
+`"hybrid": true` (WebView/Chrome content, from `9515`). `MobilePortAllocator` checks a port
+out of a bounded pool per driver creation and returns it when that driver is quit — success,
+failure, or a retry — so concurrent sessions never collide and the pool never leaks across a
+long run; every allocation/release is logged
+(`logs/framework.log`, `MobilePortAllocator`). Pool sizes are configurable, with no code
+change, via `config/mobile-devices.json`'s `ports` section (`start`/`count` per port type;
+defaults shown above).
+
+## Examples
+
+**Web:**
 
 ```java
-public class LoginTest {
-    @BeforeMethod(alwaysRun = true)
-    public void launchApp() {
-        MobileDriverManager.getDriver(); // triggers app launch for this thread
-    }
+@Test(groups = {"smoke", "web"})
+public void validLoginNavigatesToHomePage() {
+    new LoginPage().open(ConfigManager.getBaseUrl())
+            .enterEmail(SecretManager.get("EVENTHUB_EMAIL"))
+            .enterPassword(SecretManager.get("EVENTHUB_PASSWORD"))
+            .clickLogin();
 
-    @Test(groups = {"smoke", "mobile"})
-    public void standardUserCanLogIn() {
-        new LoginPage()
-                .enterUsername(USERNAME)
-                .enterPassword(PASSWORD)
-                .tapLogin();
-
-        assertTrue(new ProductsPage().isDisplayed());
-    }
+    assertTrue(new HomePage().isDisplayed());
 }
 ```
 
-Mirrors the Web layer's structure exactly (`BaseMobilePage`, `MobileActions`, W3C
-`PointerInput` gestures, not the deprecated `TouchAction` API). The same `test-*`
-accessibility identifiers work unmodified on both the Android emulator and iOS simulator -
-verified by running the same Page Object classes (`com.tests.mobile.pages.*`) against both,
-with no code change, only config. See `src/test/java/com/tests/mobile/`, and
-[Troubleshooting](#troubleshooting) for resuming local mobile infra.
+Page Objects extend `BasePage`, expose business-level actions only, and log each step
+(`logger.info(...)`), which mirrors automatically into the Extent report.
 
-Available in **every** environment (`-Denv=dev/qa/uat/staging`), not just one - each
-`config/{env}.properties` carries the same local Android default plus a commented-out iOS
-alternative (see the file for exact values). Switch platform per-run without editing
-anything:
-
-```bash
-# Android (the active default in every config/{env}.properties)
-mvn test -Dgroups=mobile
-
-# iOS - override the four keys that differ (adjust device name/version to whatever
-# simulator you actually have booted: `xcrun simctl list devices available`)
-mvn test -Dgroups=mobile -Dmobile.platform=ios -Dmobile.device.name="iPhone 17 Pro" \
-    -Dmobile.platform.version=26.2 -Dmobile.app.path=apps/swag.app
-```
-
-### Mobile device providers (requirement.md §34 - cloud device farm extensibility)
-
-The same test/Page Object code runs unchanged against an emulator, a physical device, or a
-cloud device farm - only `mobile.device.provider` and a few related config values change,
-regardless of which `config/{env}.properties` is active:
-
-| Provider | `mobile.device.provider` | Notes |
-|---|---|---|
-| Emulator/simulator | `LOCAL` (default) | Every `config/{env}.properties`'s Android/iOS blocks above. |
-| Physical device | `LOCAL` | Same local Appium server; set `mobile.udid` to the device's serial (`adb devices`)/UDID instead of/alongside `mobile.device.name`. |
-| BrowserStack | `BROWSERSTACK` | Routes through BrowserStack's device cloud instead of a local Appium server. |
-
-```bash
-mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK \
-    -Dmobile.device.name="Samsung Galaxy S23" -Dmobile.platform.version=13 \
-    -Dbrowserstack.app.id=bs://<app-id-from-browserstack-upload>
-```
-
-`BROWSERSTACK_USERNAME`/`BROWSERSTACK_ACCESS_KEY` are secrets (`.secret.env.example`), never
-a plain config value. The app itself must already be uploaded to BrowserStack (their
-[app-upload API](https://www.browserstack.com/docs/app-automate/appium/upload-app) returns
-the `bs://...` ID `browserstack.app.id` expects) - this framework doesn't automate that
-upload step itself, deliberately: it's a one-time-per-app-version action, not a per-test-run
-one, and doesn't belong in the driver-creation hot path.
-
-### Parallel mobile execution
-
-Concurrent local Android/iOS sessions (multiple emulators, multiple physical devices, or a
-mix) need distinct `systemPort`/`wdaLocalPort` values per session or they collide -
-`MobilePortAllocator` allocates a fresh one on every mobile driver creation automatically, no
-config needed (not relevant for BrowserStack, which isolates devices server-side - see
-`THREAD_SAFETY_AUDIT.md`).
-
-A **device matrix** (`testdata/json/mobile-devices.json`) plus TestNG's own
-`@DataProvider(parallel = true)` drives a real cross-platform parallel run -
-`MultiDeviceParallelTest` launches every row in the matrix concurrently, each on its own
-thread, each overriding `mobile.platform`/`device.name`/`platform.version`/`app.path` via the
-same thread-local `ConfigManager.setOverride` mechanism
-`LoginTest.loginWorksAcrossMultipleBrowsers` already uses for browsers - just dispatched
-concurrently here instead of sequentially. Live-verified against a real Android emulator
-*and* a real iOS simulator launching the same app **at the same time** on different threads,
-not simulated. Add a row to the JSON file for any additional device (another emulator,
-another physical device) - no code change needed.
-
-```bash
-mvn test -Dtest=MultiDeviceParallelTest
-```
-
-## API automation example
+**Mobile:**
 
 ```java
-public class AuthenticationTest {
-    private final AuthenticationService authService = new AuthenticationService();
+@BeforeMethod(alwaysRun = true)
+public void launchApp() { MobileDriverManager.getDriver(); }
 
-    @Test(groups = {"smoke", "api"})
-    public void loginWithExistingAccountWorks() {
-        AuthResponse response = authService.login(
-                SecretManager.get("EVENTHUB_EMAIL"), SecretManager.get("EVENTHUB_PASSWORD"));
-
-        assertTrue(response.success());
-    }
+@Test(groups = {"smoke", "mobile"})
+public void standardUserCanLogIn() {
+    new LoginPage().enterUsername(USERNAME).enterPassword(PASSWORD).tapLogin();
+    assertTrue(new ProductsPage().isDisplayed());
 }
 ```
 
-`AuthenticationService`/`EventService`/`BookingService` wrap `ApiClient` (the one place REST
-Assured is actually called from); every request/response is logged (masked) and, since
-Phase 11, attached to the Allure report automatically. See `src/test/java/com/tests/api/`.
+Mirrors Web exactly (`BaseMobilePage`, W3C `PointerInput` gestures, not the deprecated
+`TouchAction`). The same `test-*` accessibility identifiers work unmodified on Android and
+iOS.
 
-## API chaining example
+**API:**
+
+```java
+@Test(groups = {"smoke", "api"})
+public void loginWithExistingAccountWorks() {
+    AuthResponse response = authService.login(
+            SecretManager.get("EVENTHUB_EMAIL"), SecretManager.get("EVENTHUB_PASSWORD"));
+    assertTrue(response.success());
+}
+```
+
+Services (`AuthenticationService`, `EventService`, `BookingService`) wrap `ApiClient` — the
+only place REST Assured is called from. Every request/response is logged (masked) and
+attached to the Allure report automatically.
+
+**API chaining:**
 
 ```java
 ApiResponse createEventResponse = eventService.createEvent(eventRequest);
-int eventId = createEventResponse.jsonPath().getInt("data.id");
-ApiContext.set("eventId", String.valueOf(eventId));
+ApiContext.set("eventId", String.valueOf(createEventResponse.jsonPath().getInt("data.id")));
 
 CreateBookingRequest bookingRequest = new CreateBookingRequest(
-        Integer.parseInt(ApiContext.get("eventId")), "Context Tester", "context.tester@example.com",
-        "+91-9876500001", 1);
-ApiResponse createBookingResponse = bookingService.createBooking(bookingRequest);
+        Integer.parseInt(ApiContext.get("eventId")), "Context Tester",
+        "context.tester@example.com", "+91-9876500001", 1);
+bookingService.createBooking(bookingRequest);
 ```
 
-`ApiContext` (thread-local, backed by `VariableManager`) is the thread-safe context/variable
-manager requirement.md §11 requires. It also self-registers as a `PlaceholderResolver`
-source, so a chained value resolves as `${{eventId}}` in test data too, and it absorbed
-`ApiClient`'s bearer-token storage (Phase 8), so `${{accessToken}}` works the same way. See
-`ApiContextChainingTest` for the full round trip, including a real
-`invocationCount=20, threadPoolSize=8` proof that chained values never bleed across threads.
+`ApiContext` (thread-local, backed by `VariableManager`) also self-registers as a
+`PlaceholderResolver` source, so `${{eventId}}` resolves in test data too — same mechanism
+covers `ApiClient`'s bearer token (`${{accessToken}}`).
 
 ## Parallel execution
 
@@ -467,89 +440,81 @@ source, so a chained value resolves as `${{eventId}}` in test data too, and it a
 mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4
 ```
 
-`-Dparallel`/`-DthreadCount` are plain Surefire/TestNG system properties - no suite XML
-needed, confirmed live with genuinely concurrent Chrome/Firefox sessions and API calls
-interleaved on different threads (distinct thread names/overlapping timestamps in
-`logs/framework.log`). `-Dparallel=classes` runs each selected class on its own thread;
-`-Dparallel=methods` parallelizes at the method level, already proven directly by the
-`invocationCount`/`threadPoolSize` stress tests in `ApiContextChainingTest`/`TestDataManagerTest`.
+Plain Surefire/TestNG system properties — no suite XML needed. `-Dparallel=classes` runs
+each class on its own thread; `-Dparallel=methods` parallelizes at the method level.
 
-Mobile parallelizes the same way (`-Dgroups=mobile -Dparallel=...`), with one addition:
-concurrent local Android/iOS sessions need distinct `systemPort`/`wdaLocalPort` values or
-they collide port-for-port - `MobilePortAllocator` hands out a fresh one on every mobile
-driver creation automatically (see "Mobile device providers" under
-[Mobile automation example](#mobile-automation-example)), no config needed. Requires
-multiple emulators/devices/BrowserStack capacity to actually exercise, obviously - a single
-local emulator can only run one session at a time regardless of thread count.
-
-Full classification of every thread-shared object, plus real ordering/port-collision bugs
-this uncovered and fixed, is in [`THREAD_SAFETY_AUDIT.md`](THREAD_SAFETY_AUDIT.md).
+Mobile parallelizes the same way (`-Dparallel` present, any mode), distributing tests across
+every configured device as a work queue instead of one shared device — see
+[Running tests](#running-tests). Distinct `systemPort`/`wdaLocalPort`/`chromedriverPort` per
+session are handled automatically. Genuine parallel mobile needs multiple emulators/devices/
+BrowserStack capacity, since one local emulator only runs one session at a time.
 
 ## Reporting
 
-Both Extent and Allure, automatically, with no reporting code in tests/Page Objects:
-
-- **Extent** (`reports/extent/index.html`, self-contained HTML): `ExtentLoggingAppender`
-  mirrors every `com.framework`/`com.tests` log line into the current test's report node
-  automatically - it's a Logback appender, wired in `logback.xml`, not a manual call.
-- **Allure** (`allure-results/`, raw JSON - `allure serve allure-results` to view):
-  `allure-testng` captures results/groups/retries/`@Before`/`@AfterMethod` natively;
-  `AllureManager` adds masked API request/response and screenshot attachments on top.
-- **Screenshots**: `screenshot.mode` = `FAILURE` | `EVERY_ACTION` | `DISABLED`. On failure,
-  `ScreenshotCaptureListener` captures and attaches to both reports via `ReportManager`.
-- **Retry**: `RetryAnalyzer` (max attempts via `retry.max.count`, default 1) retries
-  everything except `AssertionError` - a retried test's original failed attempt keeps its
-  own report entry, labeled `(Retry N)`, never silently overwritten.
+- **Extent** (`reports/extent/index.html`, self-contained HTML) — every `logger.info(...)`
+  in framework/test code mirrors into the report automatically via a Logback appender.
+- **Allure** (`allure-results/`, raw JSON — `allure serve allure-results` to view) — masked
+  API request/response and screenshots attached automatically.
+- **Screenshots** — `screenshot.mode` = `FAILURE` (default) | `EVERY_ACTION` | `DISABLED`.
+- **Retry** — `RetryAnalyzer` (`retry.max.count`, default 1) retries everything except
+  `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`.
 
 ## CI/CD
 
-Ready-to-use pipelines for all three platforms requirement.md names - see
-[`CI_CD.md`](CI_CD.md) for the full picture (secrets setup, artifact locations, browser
-availability per platform, and two real findings from actually running these commands
-rather than trusting them):
+GitHub Actions (`.github/workflows/ci.yml`) is the only CI config in this repo, running the
+same `mvn` command shape you'd run locally:
 
-| Platform | File |
-|---|---|
-| GitHub Actions | `.github/workflows/ci.yml` |
-| Jenkins | `Jenkinsfile` |
-| GitLab CI | `.gitlab-ci.yml` |
+| Job | Trigger | Command shape |
+|---|---|---|
+| `smoke` | Every pull request | `-Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true -DexcludedGroups=mobile,frameworkSelfTest` |
+| `regression` | Push to `main`, or manual dispatch | Same shape, `env`/`groups`/`browser` overridable as dispatch inputs (blank `groups` = every group) |
 
-## Adding a new test
+Both jobs archive `target/surefire-reports/`, `logs/`, `reports/extent/`,
+`allure-results/`, and `target/screenshots/` regardless of pass/fail.
 
-```java
-public class MyNewTest {
-    @Test(groups = {"smoke", "api"})   // or "web" / "mobile"
-    public void myNewScenario() {
-        // business-level actions only - no raw Selenium/Appium/REST Assured calls here
-    }
-}
+Secrets: repo **Settings > Secrets and variables > Actions**, for `EVENTHUB_EMAIL` /
+`EVENTHUB_PASSWORD` — any new key `SecretManager.get("KEY")` needs resolves against
+`System.getenv("KEY")` automatically, no framework change required. `ubuntu-latest` ships
+Chrome/Firefox preinstalled, so no driver-install step is needed.
+
+## BrowserStack
+
+The same Mobile test/Page Object code runs unchanged against BrowserStack — only
+`mobile.device.provider` and a few config values change:
+
+```bash
+mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK \
+    -Dmobile.device.name="Samsung Galaxy S23" -Dmobile.platform.version=13 \
+    -Dbrowserstack.app.id=bs://<app-id-from-browserstack-upload>
 ```
 
-Retry (`RetryAnalyzer`), MDC log-tagging, Extent/Allure reporting, and driver cleanup all
-apply automatically via the auto-registered listeners - nothing to wire up per test. If the
-method needs setup, add `@BeforeMethod(alwaysRun = true)` - see
-[Troubleshooting](#troubleshooting) for why `alwaysRun` is not optional in this codebase.
+1. Add `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` as a secret (never plain config).
+2. Upload the app once per version via BrowserStack's own
+   [app-upload API](https://www.browserstack.com/docs/app-automate/appium/upload-app) — not
+   automated here; it returns the `bs://<id>` string `browserstack.app.id` needs.
+3. `mobile.device.name`/`mobile.platform.version` are placed automatically under the correct
+   BrowserStack capabilities by `DriverFactory` — same config keys as `LOCAL`.
+4. Optional: `browserstack.project.name` / `browserstack.build.name` for dashboard grouping.
 
-## Adding a new page
+None of `config/{env}.properties` ship with `browserstack.*` pre-filled — pass them as `-D`
+flags per run, or add persistent lines only if an environment should always target
+BrowserStack.
 
-```java
-public class MyNewPage extends BasePage {
-    private static final By SOME_ELEMENT = By.id("some-id");
+## Writing tests
 
-    public MyNewPage doSomething() {
-        logger.info("Doing something");   // becomes an Extent report step automatically
-        click(SOME_ELEMENT);
-        return this;
-    }
-}
-```
+Test code calls only business-level Page Object/Service methods — never raw
+Selenium/Appium/REST Assured. Retry, logging, reporting, and driver cleanup are automatic.
 
-Extend `BasePage` (Web) or `BaseMobilePage` (Mobile). Expose business-level actions that
-return `this` for chaining, or the next Page Object when a navigation genuinely completes.
-For a repeated element (a card, a row), extend `BaseComponent`/`BaseMobileComponent` instead
-and take an already-located root element in the constructor - see `EventCardComponent`.
+> **Every new `@BeforeMethod` needs `alwaysRun = true`.** Otherwise it silently stops running
+> the moment `-Dgroups=` is added to a command.
 
-## Adding a new API service
+**New page (Web/Mobile):** extend `BasePage`/`BaseMobilePage`, expose actions returning
+`this` (chaining) or the next Page Object (real navigation). For a repeated element, extend
+`BaseComponent`/`BaseMobileComponent` and take an already-located root element in the
+constructor. Mobile gestures go through `MobileActions`'s W3C `PointerInput`, never
+`TouchAction`.
+
+**New API service:**
 
 ```java
 public final class MyNewService {
@@ -559,60 +524,51 @@ public final class MyNewService {
 }
 ```
 
-One method per endpoint, returning `ApiResponse` (or a parsed DTO if the caller always needs
-it parsed - see `AuthenticationService`). Never call REST Assured directly outside
-`ApiClient`. Request/response DTOs are Java records under `api/requests`/`api/responses`.
+Request/response DTOs are Java records under `api/requests`/`api/responses`; one service
+method per endpoint, never calling REST Assured outside `ApiClient`.
+
+## Thread safety
+
+Every shared object in `com.framework.*` falls into one of five categories: **immutable
+global** (loaded once, read-only), **thread-safe singleton** (`ConcurrentHashMap`,
+`CopyOnWriteArrayList`, `AtomicInteger`), **thread-local**, **test-scoped** (safe only because
+TestNG runs one thread per class instance), or **suite-scoped listener** (stateless, only
+touches other classes' thread-local state).
+
+Notably: `ConfigManager`'s per-test overrides, `VariableManager`/`ApiContext`, and every
+WebDriver/AppiumDriver are `ThreadLocal`. `MobilePortAllocator` checks each port out of a
+bounded, thread-safe pool and always returns it on driver quit — success, failure, or a retry
+— rather than caching one per thread; an earlier cached-per-thread version caused real port
+collisions on retry. Test class instance fields
+written in `@BeforeMethod` and read in `@AfterMethod` are safe under `parallel="classes"` but
+would **not** be safe under `parallel="methods"` on the same class — none of this framework's
+tests run that way.
+
+Validated live: `-Dparallel=classes -DthreadCount=4` with genuinely concurrent Chrome/Firefox
+sessions and API calls (distinct thread names/overlapping timestamps in
+`logs/framework.log`); `-Dparallel=methods` via `invocationCount`/`threadPoolSize` stress
+tests in `ApiContextChainingTest`/`TestDataManagerTest`; and a real Android emulator + iOS
+simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via overlapping
+`POST /session` requests in Appium's own server log.
 
 ## Troubleshooting
 
-**`mvn test` with no flags fails on `RetryBehaviorTest`** - expected.
-`assertionFailureIsNeverRetried` fails on *every* invocation by design, to prove
-`RetryAnalyzer` never retries a real assertion failure. It's tagged `frameworkSelfTest`,
-excluded from the standard run: `mvn test -DexcludedGroups=mobile,frameworkSelfTest`.
+| Symptom | Cause & fix |
+|---|---|
+| Plain `mvn test` fails on `RetryBehaviorTest` | Expected — `frameworkSelfTest` deliberately fails every run to prove retries never mask a real assertion. Run `-DexcludedGroups=mobile,frameworkSelfTest`. |
+| Mobile fails with `SessionNotCreated` | No emulator/Appium server running — start both, or exclude `mobile`. |
+| `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag. Real ones: `smoke`, `sanity`, `api`, `web`, `mobile`, `frameworkSelfTest`. Check the printed test count. |
+| `@BeforeMethod`-driven setup silently doesn't run under `-Dgroups=X`, test fails with 401 | Missing `alwaysRun = true` on that `@BeforeMethod`. |
+| Masking looks missing on a new log/report line | Masking is opt-in per call site — add `.mask()` at that call site. |
+| A `@DataProvider` row with a secret leaks into `allure-results/` | Allure's own interceptor bypasses the masker via `toString()` — give the row type a custom masking `toString()`. |
+| Web browser config looks wrong under `parallel="classes"` | `ConfigParameterListener` resets config before every invoked method — if this recurs, check nothing else caches a config value. |
+| `Log4j2 could not find a logging implementation` | Harmless — Apache POI's internal logger falling back to SimpleLogger. |
+| Selenium CDP version warnings | Harmless — Chrome's DevTools Protocol is newer than Selenium's bundled client. |
 
-**Mobile tests fail with `SessionNotCreated`** - no emulator/Appium server running. Start
-both (`emulator -avd <name> -no-snapshot -no-boot-anim &` and `appium --base-path /wd/hub &`),
-or run without mobile: `-DexcludedGroups=mobile,frameworkSelfTest`.
+**Where to look:** `logs/framework.log` (MDC-tagged per thread), `reports/extent/index.html`,
+`allure-results/` (`allure serve allure-results`), `target/screenshots/`,
+`target/surefire-reports/`.
 
-**`-Dgroups=X` runs zero tests but still reports `BUILD SUCCESS`** - `X` isn't a group any
-`@Test` is actually tagged with (the real ones: `smoke`, `sanity`, `api`, `web`, `mobile`,
-`frameworkSelfTest`). Surefire/TestNG don't fail on an empty group match by default; check
-the actual test count in the summary, not just the exit code.
-
-**A `@BeforeMethod`-driven login/setup silently doesn't run under `-Dgroups=X`, and the
-`@Test` fails with something like 401 Unauthorized** - every `@BeforeMethod` in this codebase
-declares `alwaysRun = true` for exactly this reason: TestNG silently skips a `@BeforeMethod`
-with no `groups` of its own whenever a group *include* filter is active, even though the
-`@Test` it sets up for still runs. If you add a new `@BeforeMethod`, add `alwaysRun = true`
-too - see `CI_CD.md`'s "found in practice" note for the full story.
-
-**Masking is opt-in per call site, not automatic anywhere.** `SensitiveDataMasker.mask(...)`
-must be called explicitly wherever text might contain a secret - it isn't wired into
-Logback/SLF4J globally. A real leak (an unmasked email in a log line one class away from a
-correctly-masked one) was caught this way in Phase 10; if you add a new log/report call site
-that might carry a secret, mask it there.
-
-**A `@DataProvider` row type with a secret field can leak it into `allure-results/` even if
-every framework log/report call site is masked correctly.** `allure-testng` automatically
-records every `@DataProvider` row into the Allure result's `parameters` via the row object's
-own `toString()` - entirely outside framework code, via its own AspectJ interceptor, so
-`SensitiveDataMasker` never gets a chance to run. Found live in Phase 14:
-`DataDrivenLoginTest.LoginAttempt`'s auto-generated record `toString()` put a raw password
-straight into `allure-results/*-result.json`. Fixed with a custom `toString()` masking the
-field (see `LoginAttempt`'s Javadoc). Any new `@DataProvider` row type carrying a secret
-needs the same treatment - there is no central fix for this one.
-
-**A Web test's browser configuration (headless, browser choice) looks wrong under
-`parallel="classes"`** - `ConfigParameterListener` resets/repopulates config before *every*
-invoked method (not just `onTestStart`, which fires after `@BeforeMethod` and is too late for
-config a `@BeforeMethod`-triggered driver creation needs) - this was a real Phase 12 bug,
-already fixed; if it recurs, check that whatever's reading config isn't caching a value from
-before the fix's reasoning applies.
-
-**`Log4j2 could not find a logging implementation` on the console** - harmless. Apache POI's
-own internal logging (used by the Excel test-data reader) falls back to a SimpleLogger; it
-does not affect this framework's own SLF4J/Logback output or test results.
-
-**CDP version warnings from Selenium** (`Unable to find CDP implementation matching ...`) -
-harmless; Chrome's DevTools Protocol version is newer than Selenium's bundled CDP client.
-Does not affect test execution.
+**Debug from an IDE:** any test class/method is a plain TestNG entity — right-click > Debug
+works directly. From the CLI: `mvn test -Dtest=... -Dmaven.surefire.debug`, then attach on
+`localhost:5005`.

@@ -178,7 +178,7 @@
     <build>
         <finalName>web-mobile-api-framework</finalName>
         <!-- config/ lives at the repo root, not nested under src/main/resources, so a tester
-             can find and edit dev/qa/uat/staging.properties directly without navigating the
+             can find and edit dev/qa.properties directly without navigating the
              Maven source tree - see README.md's "Environment configuration". Declaring any
              <resources> here requires re-declaring the default src/main/resources explicitly
              (Maven does not merge it in silently once you add a custom entry), so both are

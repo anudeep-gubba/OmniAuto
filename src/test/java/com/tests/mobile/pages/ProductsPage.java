@@ -30,11 +30,15 @@ public class ProductsPage extends BaseMobilePage {
     }
 
     public boolean isDisplayed() {
-        return isDisplayed(PAGE_TITLE);
+        boolean displayed = isDisplayed(PAGE_TITLE);
+        logger.info("Products page displayed: {}", displayed);
+        return displayed;
     }
 
     public List<ProductItemComponent> getProducts() {
         List<WebElement> roots = MobileActions.findAll(PRODUCT_ITEMS);
-        return roots.stream().map(ProductItemComponent::new).toList();
+        List<ProductItemComponent> products = roots.stream().map(ProductItemComponent::new).toList();
+        logger.info("Products page shows {} item(s)", products.size());
+        return products;
     }
 }

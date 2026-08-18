@@ -30,6 +30,8 @@ import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -149,20 +151,83 @@ final class DriverFactory {
     // ------------------------------------------------------------------
 
     static AppiumDriver createMobileDriver() {
-        MobileDeviceProvider provider = MobileDeviceProvider.fromString(
-                ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_PROVIDER, "LOCAL"));
-        MobilePlatformType platform = MobilePlatformType.fromString(ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM));
-        URL serverUrl = toUrl(serverUrlFor(provider));
-        Duration commandTimeout = Duration.ofSeconds(ConfigManager.getInt(ConfigKeys.APPIUM_COMMAND_TIMEOUT, 60));
+        resolveActiveDeviceFromPoolIfNeeded();
+        try {
+            MobileDeviceProvider provider = MobileDeviceProvider.fromString(
+                    ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_PROVIDER, "LOCAL"));
+            MobilePlatformType platform =
+                    MobilePlatformType.fromString(ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM));
+            URL serverUrl = toUrl(serverUrlFor(provider));
+            Duration commandTimeout = Duration.ofSeconds(ConfigManager.getInt(ConfigKeys.APPIUM_COMMAND_TIMEOUT, 60));
 
-        AppiumDriver driver = switch (platform) {
-            case ANDROID -> new AndroidDriver(serverUrl, buildAndroidOptions(provider, commandTimeout));
-            case IOS -> new IOSDriver(serverUrl, buildIosOptions(provider, commandTimeout));
-        };
+            AppiumDriver driver = switch (platform) {
+                case ANDROID -> new AndroidDriver(serverUrl, buildAndroidOptions(provider, commandTimeout));
+                case IOS -> new IOSDriver(serverUrl, buildIosOptions(provider, commandTimeout));
+            };
 
-        LOGGER.info("Mobile driver created: provider={}, platform={}, deviceName={}",
-                provider, platform, ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME));
-        return driver;
+            LOGGER.info("Mobile driver created: provider={}, platform={}, deviceName={}",
+                    provider, platform, ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME));
+            return driver;
+        } catch (RuntimeException e) {
+            // A device checked out of MobileDevicePool (a -Dparallel run), and any port(s)
+            // checked out of MobilePortAllocator, are only ever released when a driver that
+            // was actually created later gets quit - if creation itself fails (a real
+            // SessionNotCreated, a bad capability, ...), nothing would otherwise release them,
+            // permanently shrinking both pools for the rest of the run. A no-op release when
+            // nothing was checked out (the ordinary, non-pooled case).
+            MobileDevicePool.releaseForCurrentThread();
+            MobilePortAllocator.releaseAllForCurrentThread();
+            throw e;
+        }
+    }
+
+    /**
+     * A mobile run names no device *details* of its own on the command line - device name,
+     * platform version, and app path all come from {@code config/mobile-devices.json} only
+     * ({@link MobileDeviceMatrix}). Which device(s) is decided by whether {@code -Dparallel}
+     * is present:
+     * <ul>
+     *     <li><b>No {@code -Dparallel}:</b> {@link ConfigKeys#MOBILE_PLATFORM} (android/ios,
+     *     from {@code config/{env}.properties}) picks {@code androidList} or {@code iosList};
+     *     every test then uses that list's first id, sequentially.</li>
+     *     <li><b>{@code -Dparallel} present:</b> each test checks a device out of
+     *     {@link MobileDevicePool} (both lists combined) and blocks if every device is
+     *     currently busy - tests are distributed across the pool as a work queue, not one
+     *     device per test regardless of load.</li>
+     * </ul>
+     * An explicit {@code mobile.device.name} (config, {@code -D}, or a test override - e.g.
+     * {@code MultiDeviceParallelTest} setting one per matrix row) always wins over both and
+     * skips this resolution entirely.
+     */
+    private static void resolveActiveDeviceFromPoolIfNeeded() {
+        if (ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME, null) != null) {
+            return;
+        }
+        MobileDeviceMatrix.Row device = MobileDevicePool.isPooledRunActive()
+                ? MobileDevicePool.checkout()
+                : MobileDeviceMatrix.loadDevice(firstIdInActivePlatformList());
+        ConfigManager.setOverride(ConfigKeys.MOBILE_PLATFORM, device.platform());
+        ConfigManager.setOverride(ConfigKeys.MOBILE_DEVICE_NAME, device.deviceName());
+        ConfigManager.setOverride(ConfigKeys.MOBILE_PLATFORM_VERSION, device.platformVersion());
+        ConfigManager.setOverride(ConfigKeys.MOBILE_APP_PATH, device.appPath());
+        ConfigManager.setOverride(ConfigKeys.MOBILE_HYBRID, String.valueOf(device.hybrid()));
+        if (device.appiumServerUrl() != null) {
+            // Only this specific device names its own Appium server (a real multi-machine
+            // device lab) - every other device keeps using the shared appium.server.url.
+            ConfigManager.setOverride(ConfigKeys.APPIUM_SERVER_URL, device.appiumServerUrl());
+        }
+    }
+
+    /** The first device id in {@code mobile-devices.json}'s {@code androidList}/{@code iosList}, per {@link ConfigKeys#MOBILE_PLATFORM}. */
+    private static String firstIdInActivePlatformList() {
+        String platform = ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM, "android").trim().toLowerCase(Locale.ROOT);
+        List<String> ids = "ios".equals(platform) ? MobileDeviceMatrix.iosList() : MobileDeviceMatrix.androidList();
+        if (ids.isEmpty()) {
+            throw new DriverInitializationException(
+                    "config/mobile-devices.json's '" + (platform.equals("ios") ? "iosList" : "androidList")
+                            + "' is empty.");
+        }
+        return ids.get(0);
     }
 
     private static String serverUrlFor(MobileDeviceProvider provider) {
@@ -188,9 +253,17 @@ final class DriverFactory {
 
         // LOCAL: an emulator or a physical device on this machine - same code path either
         // way (see MobileDeviceProvider's own Javadoc for why there is no separate value).
-        options.setDeviceName(ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME))
+        String deviceName = ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME);
+        options.setDeviceName(deviceName)
                 .setPlatformVersion(ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM_VERSION))
-                .setSystemPort(MobilePortAllocator.nextSystemPort());
+                .setSystemPort(MobilePortAllocator.checkoutSystemPort(deviceName));
+
+        if (ConfigManager.getBoolean(ConfigKeys.MOBILE_HYBRID, false)) {
+            // Only requested for a device whose config/mobile-devices.json entry sets
+            // "hybrid": true (a WebView/Chrome-hybrid app) - most Android devices don't need
+            // a chromedriverPort at all.
+            options.setChromedriverPort(MobilePortAllocator.checkoutChromedriverPort(deviceName));
+        }
 
         String udid = ConfigManager.getString(ConfigKeys.MOBILE_UDID, null);
         if (udid != null) {
@@ -235,9 +308,10 @@ final class DriverFactory {
 
         // LOCAL: a simulator or a physical device on this machine - same code path either
         // way (see MobileDeviceProvider's own Javadoc for why there is no separate value).
-        options.setDeviceName(ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME))
+        String deviceName = ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME);
+        options.setDeviceName(deviceName)
                 .setPlatformVersion(ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM_VERSION))
-                .setWdaLocalPort(MobilePortAllocator.nextWdaLocalPort());
+                .setWdaLocalPort(MobilePortAllocator.checkoutWdaLocalPort(deviceName));
 
         String udid = ConfigManager.getString(ConfigKeys.MOBILE_UDID, null);
         if (udid != null) {

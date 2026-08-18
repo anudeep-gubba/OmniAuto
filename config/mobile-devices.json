@@ -1,0 +1,21 @@
+{
+  "devices": {
+    "android1": { "platform": "android", "deviceName": "Pixel_10", "platformVersion": "17" },
+    "ios1": { "platform": "ios", "deviceName": "iPhone 17 Pro", "platformVersion": "26.2" },
+    "ios2": { "platform": "ios", "deviceName": "iPhone 17", "platformVersion": "26.2" }
+  },
+
+  "androidList": ["android1"],
+  "iosList": ["ios1", "ios2"],
+
+  "matrices": {
+    "cross-platform": ["android1", "ios1"],
+    "ios": ["ios1", "ios2"]
+  },
+
+  "ports": {
+    "systemPort": { "start": 8200, "count": 50 },
+    "wdaLocalPort": { "start": 8100, "count": 50 },
+    "chromedriverPort": { "start": 9515, "count": 50 }
+  }
+}

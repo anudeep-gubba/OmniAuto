@@ -5,6 +5,7 @@ import com.framework.config.ConfigManager;
 import com.framework.driver.MobileDriverManager;
 import com.framework.driver.WebDriverManager;
 import com.framework.reporting.ExtentManager;
+import com.framework.secrets.SecretManager;
 import org.testng.IInvokedMethod;
 import org.testng.IInvokedMethodListener;
 import org.testng.ITestContext;
@@ -36,8 +37,26 @@ import org.testng.ITestResult;
  * the current test node) fires <em>after</em> {@link ScreenshotCaptureListener}'s (which
  * attaches a failure screenshot to that still-open node) - and before
  * {@link DriverCleanupListener}'s, which does not depend on Extent state either way.</p>
+ *
+ * <p><b>Found in practice:</b> {@link ConfigManager}/{@link SecretManager} each log one
+ * startup message the very first time anything touches them (config-loaded,
+ * {@code .secret.env}-loaded) - ordinary {@code com.framework} logging, so
+ * {@link com.framework.reporting.ExtentLoggingAppender} mirrors it like anything else. Because
+ * that first touch happens lazily, wherever it happens to fall, an unlucky run put both
+ * messages inside some unrelated test's own step log - e.g. a login test's report showing a
+ * {@code .secret.env loaded...} line with nothing to do with logging in. {@link #onStart}
+ * forces both to initialize here, before any {@code @Test} method - and therefore before any
+ * Extent node - exists, so the appender's own existing "drop it if no test is active" rule
+ * (see its javadoc) now correctly applies to these two as well. They still reach the console/
+ * file logs exactly as before; only the misattributed Extent-report entry is prevented.</p>
  */
 public class ExtentReportingListener implements IInvokedMethodListener, ITestListener {
+
+    @Override
+    public void onStart(ITestContext context) {
+        ConfigManager.getBrowser();
+        SecretManager.has("__report_clarity_warmup__");
+    }
 
     @Override
     public void beforeInvocation(IInvokedMethod method, ITestResult testResult) {

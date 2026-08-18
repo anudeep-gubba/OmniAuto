@@ -26,6 +26,8 @@ public class EventsPage extends BasePage {
     public List<EventCardComponent> getEventCards() {
         WebWaits.waitForVisible(EVENT_CARDS);
         List<WebElement> roots = WebActions.findAll(EVENT_CARDS);
-        return roots.stream().map(EventCardComponent::new).toList();
+        List<EventCardComponent> cards = roots.stream().map(EventCardComponent::new).toList();
+        logger.info("Events listing shows {} event(s)", cards.size());
+        return cards;
     }
 }

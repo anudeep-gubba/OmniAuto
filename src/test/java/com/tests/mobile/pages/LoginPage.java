@@ -2,6 +2,7 @@ package com.tests.mobile.pages;
 
 import com.framework.mobile.BaseMobilePage;
 import com.framework.mobile.MobileActions;
+import com.framework.secrets.SensitiveDataMasker;
 import io.appium.java_client.AppiumBy;
 import org.openqa.selenium.By;
 
@@ -23,14 +24,14 @@ public class LoginPage extends BaseMobilePage {
             By.xpath("//*[@content-desc='test-Error message']//android.widget.TextView");
 
     public LoginPage enterUsername(String username) {
-        logger.info("Entering username");
         type(USERNAME_INPUT, username);
+        logger.info("Entered username: {}", SensitiveDataMasker.mask(username));
         return this;
     }
 
     public LoginPage enterPassword(String password) {
-        logger.info("Entering password");
         type(PASSWORD_INPUT, password);
+        logger.info("Entered password: {}", SensitiveDataMasker.mask(password));
         return this;
     }
 
@@ -41,12 +42,14 @@ public class LoginPage extends BaseMobilePage {
      * object for a screen that never loaded.
      */
     public void tapLogin() {
-        logger.info("Tapping LOGIN button");
         tap(LOGIN_BUTTON);
+        logger.info("Tapped LOGIN button");
     }
 
     public String getErrorMessage() {
-        return getText(ERROR_MESSAGE);
+        String message = getText(ERROR_MESSAGE);
+        logger.info("Error message displayed: '{}'", message);
+        return message;
     }
 
     public boolean isErrorDisplayed() {
@@ -55,8 +58,8 @@ public class LoginPage extends BaseMobilePage {
 
     /** Taps one of the app's own tap-to-autofill sample usernames (e.g. "standard_user"), shown directly on the login screen. */
     public LoginPage tapSampleUser(String username) {
-        logger.info("Tapping sample user: {}", username);
         MobileActions.tap(AppiumBy.accessibilityId("test-" + username));
+        logger.info("Tapped sample user: {}", username);
         return this;
     }
 }

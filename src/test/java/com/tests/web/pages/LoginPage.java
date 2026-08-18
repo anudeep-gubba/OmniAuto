@@ -1,5 +1,6 @@
 package com.tests.web.pages;
 
+import com.framework.secrets.SensitiveDataMasker;
 import com.framework.web.BasePage;
 import org.openqa.selenium.By;
 
@@ -15,20 +16,21 @@ public class LoginPage extends BasePage {
     private static final By ERROR_TOAST_MESSAGE = By.cssSelector("[aria-live='polite'] p");
 
     public LoginPage open(String baseUrl) {
-        logger.info("Navigating to Login page");
-        navigateTo(baseUrl + "/login");
+        String url = baseUrl + "/login";
+        navigateTo(url);
+        logger.info("Navigated to {}", url);
         return this;
     }
 
     public LoginPage enterEmail(String email) {
-        logger.info("Entering email");
         type(EMAIL_INPUT, email);
+        logger.info("Entered email: {}", SensitiveDataMasker.mask(email));
         return this;
     }
 
     public LoginPage enterPassword(String password) {
-        logger.info("Entering password");
         type(PASSWORD_INPUT, password);
+        logger.info("Entered password: {}", SensitiveDataMasker.mask(password));
         return this;
     }
 
@@ -40,12 +42,14 @@ public class LoginPage extends BasePage {
      * outcomes are asserted independently.
      */
     public void clickLogin() {
-        logger.info("Clicking Sign In button");
         click(LOGIN_BUTTON);
+        logger.info("Clicked Sign In button");
     }
 
     public String getErrorMessage() {
-        return getText(ERROR_TOAST_MESSAGE);
+        String message = getText(ERROR_TOAST_MESSAGE);
+        logger.info("Error message displayed: '{}'", message);
+        return message;
     }
 
     public boolean isErrorDisplayed() {

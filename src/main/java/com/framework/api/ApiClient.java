@@ -6,6 +6,7 @@ import com.framework.exceptions.ApiException;
 import com.framework.reporting.AllureManager;
 import com.framework.secrets.SensitiveDataMasker;
 import com.framework.utils.JsonUtils;
+import io.qameta.allure.Allure;
 import io.restassured.RestAssured;
 import io.restassured.config.HttpClientConfig;
 import io.restassured.config.RestAssuredConfig;
@@ -55,7 +56,21 @@ public final class ApiClient {
         return ApiContext.has(ApiContext.ACCESS_TOKEN_KEY);
     }
 
+    /**
+     * Wrapped in an {@link Allure#step} so a test making several calls (e.g.
+     * {@code EventBookingChainingTest}'s create-event/book/verify/cleanup sequence) shows each
+     * call as its own ordered, collapsible step in the Allure report - with that call's
+     * request/response attachments nested under it - instead of every call's attachments
+     * dumped as one flat, unordered list directly on the test (indistinguishable from each
+     * other when two calls share an endpoint, and with no visual grouping of which
+     * request belongs with which response at all).
+     */
     public static ApiResponse execute(ApiRequest request) {
+        String stepName = request.method() + " " + request.endpoint();
+        return Allure.step(stepName, () -> doExecute(request));
+    }
+
+    private static ApiResponse doExecute(ApiRequest request) {
         Map<String, String> headers = ApiHeaders.build(request.headers(), ApiContext.getOptional(ApiContext.ACCESS_TOKEN_KEY).orElse(null));
 
         RequestSpecification spec = RestAssured.given()
@@ -103,15 +118,16 @@ public final class ApiClient {
             LOGGER.info("Request body: {}", maskedBody);
         }
         // Allure attachment (requirement.md section 17): reuses the same already-masked string
-        // logged above rather than re-masking, so there is exactly one place that decides what's safe to show.
-        AllureManager.attachText(request.method() + " " + request.endpoint() + " - request",
-                maskedBody != null ? maskedBody : "(no body)");
+        // logged above rather than re-masking, so there is exactly one place that decides
+        // what's safe to show. Named just "Request" - the enclosing Allure.step (see execute())
+        // already carries the method/endpoint, so repeating it here would be redundant.
+        AllureManager.attachText("Request", maskedBody != null ? maskedBody : "(no body)");
     }
 
     private static void logResponse(Response response) {
         LOGGER.info("Response status: {}", response.getStatusCode());
         String maskedBody = SensitiveDataMasker.mask(response.getBody().asString());
         LOGGER.info("Response body: {}", maskedBody);
-        AllureManager.attachText("Response " + response.getStatusCode(), maskedBody);
+        AllureManager.attachText("Response (" + response.getStatusCode() + ")", maskedBody);
     }
 }

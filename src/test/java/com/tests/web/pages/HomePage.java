@@ -24,6 +24,8 @@ public class HomePage extends BasePage {
     }
 
     public boolean isDisplayed() {
-        return header().isLoggedIn();
+        boolean displayed = header().isLoggedIn();
+        logger.info("Home page displayed (logged-in nav present): {}", displayed);
+        return displayed;
     }
 }

@@ -1,5 +1,6 @@
 package com.tests.web.components;
 
+import com.framework.secrets.SensitiveDataMasker;
 import com.framework.web.BaseComponent;
 import org.openqa.selenium.By;
 
@@ -22,22 +23,28 @@ public class HeaderComponent extends BaseComponent {
 
     public void goToEvents() {
         click(EVENTS_LINK);
+        logger.info("Clicked 'Events' in the nav");
     }
 
     public void goToBookings() {
         click(BOOKINGS_LINK);
+        logger.info("Clicked 'My Bookings' in the nav");
     }
 
     public void goToHome() {
         click(HOME_LINK);
+        logger.info("Clicked 'Home' in the nav");
     }
 
     public void logout() {
         click(LOGOUT_BUTTON);
+        logger.info("Logged out");
     }
 
     public String getLoggedInUserEmail() {
-        return textOf(USER_EMAIL_DISPLAY);
+        String email = textOf(USER_EMAIL_DISPLAY);
+        logger.info("Logged-in user email shown in nav: {}", SensitiveDataMasker.mask(email));
+        return email;
     }
 
     public boolean isLoggedIn() {

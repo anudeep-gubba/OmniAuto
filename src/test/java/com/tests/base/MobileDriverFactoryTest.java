@@ -33,6 +33,12 @@ public class MobileDriverFactoryTest {
 
     @Test(groups = "smoke")
     public void missingMobilePlatformFailsFastWithoutNetworkAccess() {
+        // A blank mobile.platform alone no longer fails fast - DriverFactory now falls back to
+        // config/mobile-devices.json's androidList/iosList (defaulting to "android") instead of
+        // requiring the key directly. Naming mobile.device.name explicitly skips that
+        // resolution entirely (see DriverFactory.resolveActiveDeviceFromPoolIfNeeded), which is
+        // the one remaining path where a blank platform is still a real, unrecoverable error.
+        ConfigManager.setOverride(ConfigKeys.MOBILE_DEVICE_NAME, "some-device");
         ConfigManager.setOverride(ConfigKeys.MOBILE_PLATFORM, "");
 
         ConfigurationException exception = expectThrows(ConfigurationException.class, MobileDriverManager::getDriver);

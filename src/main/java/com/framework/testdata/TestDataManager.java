@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.cfg.CoercionAction;
 import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
+import com.framework.config.ConfigManager;
+import com.framework.constants.ConfigKeys;
 import com.framework.exceptions.TestDataException;
 
 import java.util.List;
@@ -29,6 +31,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * *.csv         -&gt; src/test/resources/testdata/csv/
  * *.xlsx, *.xls -&gt; src/test/resources/testdata/excel/
  * </pre>
+ *
+ * <p><b>Which format a bare name reads from is configurable</b>, not hardcoded per call
+ * site: a name with no extension (e.g. {@code "login"}) resolves against
+ * {@link ConfigKeys#TEST_DATA_FORMAT} (a {@code config/{env}.properties} key, {@code json}
+ * unless set) instead of requiring an extension in the call:</p>
+ * <pre>
+ * TestDataManager.load("login"); // testdata.format=json  -&gt; testdata/json/login.json
+ *                                 // testdata.format=yaml  -&gt; testdata/yaml/login.yaml
+ * </pre>
+ * <p>A name that already carries a recognized extension (e.g. {@code "login.json"}) always
+ * wins over the config value - this only fills in a missing one, so existing call sites and
+ * tests that pin a specific format (e.g. {@code TestDataManagerTest}'s CSV vs. Excel cases)
+ * are unaffected.</p>
  *
  * <p><b>Thread-safety (requirement.md &sect;15/&sect;21):</b> each resource path's raw,
  * placeholder-unresolved records are parsed once and cached in a {@link ConcurrentHashMap} -
@@ -59,6 +74,15 @@ public final class TestDataManager {
             "xls", "excel"
     );
 
+    /** The extension a {@link ConfigKeys#TEST_DATA_FORMAT} value resolves to for a bare file name. */
+    private static final Map<String, String> EXTENSION_BY_FORMAT = Map.of(
+            "json", "json",
+            "yaml", "yaml",
+            "yml", "yaml",
+            "csv", "csv",
+            "excel", "xlsx"
+    );
+
     /**
      * A separate mapper from {@link com.framework.utils.JsonUtils}'s API-response one:
      * intentionally lenient about scalar coercion (a CSV/Excel cell's {@code "50"} converting
@@ -80,18 +104,42 @@ public final class TestDataManager {
     private TestDataManager() {
     }
 
-    /** Loads (or returns the already-cached parse of) {@code fileName}, e.g. {@code "login.json"}. */
+    /**
+     * Loads (or returns the already-cached parse of) {@code fileName}, e.g. {@code "login.json"}.
+     * A {@code fileName} with no extension (e.g. {@code "login"}) resolves against the
+     * configured default format instead - see {@link ConfigKeys#TEST_DATA_FORMAT}.
+     */
     public static TestData load(String fileName) {
-        String extension = extensionOf(fileName);
+        String resolvedFileName = resolveFileName(fileName);
+        String extension = extensionOf(resolvedFileName);
         TestDataReader reader = READERS_BY_EXTENSION.get(extension);
         if (reader == null) {
             throw new TestDataException(
-                    "Unsupported test data file extension '." + extension + "' for '" + fileName
+                    "Unsupported test data file extension '." + extension + "' for '" + resolvedFileName
                             + "'. Supported: " + READERS_BY_EXTENSION.keySet() + ".");
         }
-        String resourcePath = BASE_FOLDER + "/" + FORMAT_FOLDER_BY_EXTENSION.get(extension) + "/" + fileName;
+        String resourcePath = BASE_FOLDER + "/" + FORMAT_FOLDER_BY_EXTENSION.get(extension) + "/" + resolvedFileName;
         List<Map<String, Object>> rawRecords = CACHE.computeIfAbsent(resourcePath, reader::read);
         return new TestData(rawRecords, CONVERSION_MAPPER, resourcePath);
+    }
+
+    /**
+     * Fills in a missing extension from {@link ConfigKeys#TEST_DATA_FORMAT} (default
+     * {@code json}); a {@code fileName} that already has one is returned unchanged, so it
+     * always takes precedence over the configured default.
+     */
+    private static String resolveFileName(String fileName) {
+        if (fileName.lastIndexOf('.') > 0) {
+            return fileName;
+        }
+        String format = ConfigManager.getString(ConfigKeys.TEST_DATA_FORMAT, "json").toLowerCase(Locale.ROOT);
+        String extension = EXTENSION_BY_FORMAT.get(format);
+        if (extension == null) {
+            throw new TestDataException(
+                    "Unsupported '" + ConfigKeys.TEST_DATA_FORMAT + "' value '" + format + "' for '" + fileName
+                            + "'. Supported: " + EXTENSION_BY_FORMAT.keySet() + ".");
+        }
+        return fileName + "." + extension;
     }
 
     private static String extensionOf(String fileName) {

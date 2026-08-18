@@ -3,16 +3,17 @@ name: CI
 # Phase 13 (requirement.md section 26): command-line-driven, the same shape as
 # requirement.md's own `mvn clean test -Denv=qa -Dgroups=regression -Dbrowser=chrome
 # -Dheadless=true` example - nothing here is CI-specific framework behavior, it's the same
-# flags any engineer already runs locally (see CI_CD.md).
+# flags any engineer already runs locally (see README.md's "CI/CD" section).
 #
 # Note: "regression" in that example is illustrative, not a group this repo's tests are
-# actually tagged with (verified live, not assumed - see CI_CD.md's "found in practice"
-# note). The full run below leaves -Dgroups empty (every group) rather than filtering to a
-# group name that would silently match zero tests and report a false-green build.
+# actually tagged with (verified live, not assumed - see README.md's "found in practice"
+# note under CI/CD). The full run below leaves -Dgroups empty (every group) rather than
+# filtering to a group name that would silently match zero tests and report a false-green
+# build.
 #
-# Mobile is excluded (no emulator/Appium on a hosted runner - see [[local-mobile-test-env]]
-# equivalent note in CI_CD.md), and so is `frameworkSelfTest` (RetryBehaviorTest's
-# deliberately-always-failing method - see its own Javadoc for why that group exists).
+# Mobile is excluded (no emulator/Appium on a hosted runner), and so is `frameworkSelfTest`
+# (RetryBehaviorTest's deliberately-always-failing method - see its own Javadoc for why that
+# group exists).
 
 on:
   pull_request:

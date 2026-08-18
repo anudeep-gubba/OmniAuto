@@ -3,6 +3,8 @@ package com.tests.base;
 import com.framework.api.ApiContext;
 import com.framework.api.requests.AuthRequest;
 import com.framework.api.requests.CreateEventRequest;
+import com.framework.config.ConfigManager;
+import com.framework.constants.ConfigKeys;
 import com.framework.exceptions.TestDataException;
 import com.framework.secrets.SecretManager;
 import com.framework.testdata.TestData;
@@ -20,16 +22,18 @@ import static org.testng.Assert.expectThrows;
 /**
  * Phase 9 validation for {@link TestDataManager}/{@link TestData}: format-agnostic
  * loading, name/index lookup, typed conversion with scalar coercion, fail-fast error
- * handling, and the cached-raw/resolve-on-access thread-safety design (requirement.md
- * &sect;15, &sect;21, &sect;31, &sect;38). No live network calls here - see
- * {@code com.tests.api.DataDrivenLoginTest}/{@code DataDrivenEventCreationTest} for the
- * same data actually driving eventhub's real API.
+ * handling, the config-driven default format for extension-less file names
+ * ({@link ConfigKeys#TEST_DATA_FORMAT}), and the cached-raw/resolve-on-access
+ * thread-safety design (requirement.md &sect;15, &sect;21, &sect;31, &sect;38). No live
+ * network calls here - see {@code com.tests.api.DataDrivenLoginTest}/
+ * {@code DataDrivenEventCreationTest} for the same data actually driving eventhub's real API.
  */
 public class TestDataManagerTest {
 
     @AfterMethod(alwaysRun = true)
     public void cleanup() {
         ApiContext.clear();
+        ConfigManager.clearThreadState();
     }
 
     @Test(groups = "smoke")
@@ -92,6 +96,42 @@ public class TestDataManagerTest {
     public void unsupportedExtensionFailsFast() {
         TestDataException exception = expectThrows(TestDataException.class, () -> TestDataManager.load("data.txt"));
         assertTrue(exception.getMessage().contains(".txt"));
+    }
+
+    @Test(groups = "smoke")
+    public void bareFileNameResolvesAgainstTheConfiguredDefaultFormat() {
+        // config/qa.properties sets testdata.format=json, so a bare "login" (no extension)
+        // resolves the same way "login.json" does.
+        TestData data = TestDataManager.load("login");
+        assertEquals(data.size(), 2);
+        assertEquals(data.get("validLogin").get("email"), SecretManager.get("EVENTHUB_EMAIL"));
+    }
+
+    @Test(groups = "smoke")
+    public void bareFileNameFollowsATestOverriddenFormat() {
+        ConfigManager.setOverride(ConfigKeys.TEST_DATA_FORMAT, "yaml");
+
+        TestData data = TestDataManager.load("login-attempts");
+        assertEquals(data.size(), 2);
+        assertEquals(data.get(0).get("name"), "validCredentials");
+    }
+
+    @Test(groups = "smoke")
+    public void anExtensionInTheCallStillWinsOverTheConfiguredFormat() {
+        ConfigManager.setOverride(ConfigKeys.TEST_DATA_FORMAT, "yaml");
+
+        // "login.json" already names an extension, so it is read as JSON regardless of
+        // testdata.format - only a bare name defers to the config value.
+        TestData data = TestDataManager.load("login.json");
+        assertEquals(data.get("validLogin").get("email"), SecretManager.get("EVENTHUB_EMAIL"));
+    }
+
+    @Test(groups = "smoke")
+    public void unsupportedConfiguredFormatFailsFast() {
+        ConfigManager.setOverride(ConfigKeys.TEST_DATA_FORMAT, "xml");
+
+        TestDataException exception = expectThrows(TestDataException.class, () -> TestDataManager.load("login"));
+        assertTrue(exception.getMessage().contains("xml"));
     }
 
     @Test(groups = "smoke")

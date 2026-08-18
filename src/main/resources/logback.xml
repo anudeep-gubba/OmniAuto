@@ -36,18 +36,47 @@
         </encoder>
     </appender>
 
-    <!-- Phase 11: mirrors every com.framework/com.tests log event into the current Extent
-         test node (com.framework.reporting.ExtentLoggingAppender's own javadoc explains why
-         attaching it only to these two loggers, not root, keeps third-party noise out of the
-         report). No encoder/pattern - it logs into Extent's own model, not text output. -->
+    <!-- Mirrors log events into the current Extent test node (com.framework.reporting.
+         ExtentLoggingAppender's own javadoc has the full rationale). No encoder/pattern - it
+         logs into Extent's own model, not text output. -->
     <appender name="EXTENT" class="com.framework.reporting.ExtentLoggingAppender"/>
 
     <!-- Framework/test code: DEBUG is the point of "detailed action-level logging" - see
-         com.framework.web.WebActions, com.framework.mobile.MobileActions, com.framework.api.ApiClient. -->
-    <logger name="com.framework" level="DEBUG">
+         com.framework.web.WebActions, com.framework.mobile.MobileActions, com.framework.api.ApiClient.
+         Not attached to EXTENT here - only the curated business-narrative loggers below are,
+         so the report reads as "what the test did" (one line per real action, in plain
+         language, already carrying its own value) rather than duplicating every low-level
+         element/HTTP interaction underneath it. All of it still reaches CONSOLE/FILE via the
+         root logger below (Logback loggers propagate to their ancestors' appenders by
+         default), and the API layer's full masked request/response detail lives in Allure's
+         own per-call step instead (see ApiClient#execute) - nothing is lost, just not
+         duplicated into Extent too.
+         Found in practice: SecretManager/ConfigManager's own one-time startup log lines are
+         ordinary com.framework logging too, so before this split they landed inside whichever
+         test happened to be the first to touch either class - misattributed, not that test's
+         own action at all. ExtentReportingListener#onStart now forces both to initialize
+         before any test node exists, so they never had a home in Extent in the first place. -->
+    <logger name="com.framework" level="DEBUG"/>
+    <logger name="com.tests" level="DEBUG"/>
+
+    <!-- The business-narrative layer, per surface - Web/Mobile Page Objects and Components
+         (com.tests.*.pages/components), API Services (com.framework.api.services, the
+         business-level wrapper around ApiClient, requirement.md section 9/10's
+         "userService.createUser(request)" layer). Each of these already logs one line per
+         real action in plain language; that is the entire report, deliberately. -->
+    <logger name="com.tests.web.pages" level="DEBUG">
         <appender-ref ref="EXTENT"/>
     </logger>
-    <logger name="com.tests" level="DEBUG">
+    <logger name="com.tests.web.components" level="DEBUG">
+        <appender-ref ref="EXTENT"/>
+    </logger>
+    <logger name="com.tests.mobile.pages" level="DEBUG">
+        <appender-ref ref="EXTENT"/>
+    </logger>
+    <logger name="com.tests.mobile.components" level="DEBUG">
+        <appender-ref ref="EXTENT"/>
+    </logger>
+    <logger name="com.framework.api.services" level="DEBUG">
         <appender-ref ref="EXTENT"/>
     </logger>
 

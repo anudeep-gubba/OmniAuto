@@ -17,7 +17,7 @@ import static org.testng.Assert.expectThrows;
  * Phase 2 validation: proves the 5-tier configuration precedence chain and
  * fail-fast validation described in {@link ConfigManager}.
  *
- * <p>Multi-environment file <em>selection</em> (dev/qa/uat/staging.properties)
+ * <p>Multi-environment file <em>selection</em> (dev/qa.properties)
  * is validated separately by running {@code mvn test -Denv=<env>} for each
  * value (see Phase 2 summary) rather than here: the merged config is cached
  * for the whole process by design, so a single JVM only ever resolves one

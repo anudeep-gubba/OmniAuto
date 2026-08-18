@@ -28,10 +28,12 @@ public class HeaderComponent extends BaseMobileComponent {
 
     public void openMenu() {
         MobileActions.tap(MENU_BUTTON);
+        logger.info("Tapped Menu");
     }
 
     public void openCart() {
         tapRoot();
+        logger.info("Tapped Cart");
     }
 
     public boolean isCartBadgeDisplayed() {
@@ -43,6 +45,8 @@ public class HeaderComponent extends BaseMobileComponent {
     }
 
     public String getCartItemCount() {
-        return textOf(CART_BADGE);
+        String count = textOf(CART_BADGE);
+        logger.info("Cart badge shows {} item(s)", count);
+        return count;
     }
 }
