@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Phase 10 (requirement.md section 16): without this file, SLF4J/Logback falls back to
+    Logback's own zero-config BasicConfigurator - console-only, root level DEBUG, no file
+    appender, no rotation, and every third-party library (Selenium's HTTP client, Appium's,
+    Apache POI, TestNG itself) logging at whatever level it feels like straight into the same
+    stream as the framework's own action-level logs. This makes that configuration explicit
+    and deliberate instead.
+
+    [%X{test}] carries the currently-invoking TestNG method's "ClassName.methodName", set by
+    com.framework.listeners.TestLoggingContextListener - the one piece of context %thread
+    alone does not give you once several tests share a pooled thread under
+    parallel="methods"/"classes" (requirement.md section 20).
+-->
+<configuration>
+
+    <property name="LOG_DIR" value="logs"/>
+    <property name="LOG_PATTERN" value="%d{HH:mm:ss.SSS} [%thread] [%X{test}] %-5level %logger{36} - %msg%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/framework.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/framework-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Phase 11: mirrors every com.framework/com.tests log event into the current Extent
+         test node (com.framework.reporting.ExtentLoggingAppender's own javadoc explains why
+         attaching it only to these two loggers, not root, keeps third-party noise out of the
+         report). No encoder/pattern - it logs into Extent's own model, not text output. -->
+    <appender name="EXTENT" class="com.framework.reporting.ExtentLoggingAppender"/>
+
+    <!-- Framework/test code: DEBUG is the point of "detailed action-level logging" - see
+         com.framework.web.WebActions, com.framework.mobile.MobileActions, com.framework.api.ApiClient. -->
+    <logger name="com.framework" level="DEBUG">
+        <appender-ref ref="EXTENT"/>
+    </logger>
+    <logger name="com.tests" level="DEBUG">
+        <appender-ref ref="EXTENT"/>
+    </logger>
+
+    <!-- Third-party libraries: their default verbosity is connection/protocol-level noise
+         unrelated to what a test author needs to diagnose a failure - quieted deliberately so
+         it does not bury the framework's own DEBUG logging above. -->
+    <logger name="org.apache.http" level="WARN"/>
+    <logger name="org.apache.hc" level="WARN"/>
+    <logger name="org.openqa.selenium" level="WARN"/>
+    <logger name="io.appium" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="org.testng" level="WARN"/>
+    <logger name="org.apache.poi" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

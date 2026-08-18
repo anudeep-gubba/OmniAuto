@@ -1,0 +1,14 @@
+{
+  "androidLocal": {
+    "platform": "android",
+    "deviceName": "Pixel_10",
+    "platformVersion": "17",
+    "appPath": "apps/swaglabs.apk"
+  },
+  "iosLocal": {
+    "platform": "ios",
+    "deviceName": "iPhone 17 Pro",
+    "platformVersion": "26.2",
+    "appPath": "apps/swag.app"
+  }
+}

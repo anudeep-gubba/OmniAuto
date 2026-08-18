@@ -1,0 +1,3 @@
+name,title,category,venue,city,eventDate,price,totalSeats
+csvEvent1,CSV Data-Driven Event 1,Conference,Test Venue,Testville,2026-12-05T09:00:00.000Z,75,20
+csvEvent2,CSV Data-Driven Event 2,Workshop,Test Hall,Testville,2026-12-06T10:00:00.000Z,120,15

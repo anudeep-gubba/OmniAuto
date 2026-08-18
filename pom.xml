@@ -1,0 +1,242 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.framework</groupId>
+    <artifactId>web-mobile-api-framework</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Web-Mobile-API Automation Framework</name>
+    <description>
+        Unified enterprise automation framework: Web (Selenium), Mobile (Appium)
+        and API (REST Assured), driven by TestNG, with Extent and Allure reporting.
+    </description>
+
+    <properties>
+        <!-- Build -->
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- Core test/automation stack -->
+        <testng.version>7.10.2</testng.version>
+        <selenium.version>4.25.0</selenium.version>
+        <appium.version>9.3.0</appium.version>
+        <rest-assured.version>5.5.0</rest-assured.version>
+
+        <!-- Logging -->
+        <slf4j.version>2.0.16</slf4j.version>
+        <logback.version>1.5.8</logback.version>
+
+        <!-- Reporting -->
+        <extent-reports.version>5.1.2</extent-reports.version>
+        <allure.version>2.29.0</allure.version>
+
+        <!-- Test data formats -->
+        <jackson.version>2.18.0</jackson.version>
+        <poi.version>5.3.0</poi.version>
+        <opencsv.version>5.9</opencsv.version>
+
+        <!-- Secrets -->
+        <dotenv.version>3.0.2</dotenv.version>
+
+        <!-- Utilities -->
+        <commons-lang3.version>3.17.0</commons-lang3.version>
+
+        <!-- Plugins -->
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.1</maven-surefire-plugin.version>
+        <aspectj.version>1.9.22.1</aspectj.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Selenium BOM keeps all selenium-* modules on matching versions -->
+            <dependency>
+                <groupId>org.seleniumhq.selenium</groupId>
+                <artifactId>selenium-bom</artifactId>
+                <version>${selenium.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Jackson BOM keeps databind/yaml/annotations aligned -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- ============ Test execution ============ -->
+        <!-- Mandated test runner: suites, groups, parameters, DataProviders, parallel execution -->
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>${testng.version}</version>
+        </dependency>
+
+        <!-- ============ Web automation ============ -->
+        <!-- Version pinned via selenium-bom above -->
+        <dependency>
+            <groupId>org.seleniumhq.selenium</groupId>
+            <artifactId>selenium-java</artifactId>
+        </dependency>
+
+        <!-- ============ Mobile automation ============ -->
+        <!-- Appium Java client; brings its own Selenium-compatible driver interfaces -->
+        <dependency>
+            <groupId>io.appium</groupId>
+            <artifactId>java-client</artifactId>
+            <version>${appium.version}</version>
+        </dependency>
+
+        <!-- ============ API automation ============ -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${rest-assured.version}</version>
+        </dependency>
+        <!-- JSON schema validation for API responses (requirement: "schema validation where appropriate") -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>${rest-assured.version}</version>
+        </dependency>
+
+        <!-- ============ Logging ============ -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+
+        <!-- ============ Reporting ============ -->
+        <dependency>
+            <groupId>com.aventstack</groupId>
+            <artifactId>extentreports</artifactId>
+            <version>${extent-reports.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.qameta.allure</groupId>
+            <artifactId>allure-testng</artifactId>
+            <version>${allure.version}</version>
+        </dependency>
+
+        <!-- ============ Test data: JSON / YAML ============ -->
+        <!-- Versions pinned via jackson-bom above -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+
+        <!-- ============ Test data: Excel ============ -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+
+        <!-- ============ Test data: CSV ============ -->
+        <dependency>
+            <groupId>com.opencsv</groupId>
+            <artifactId>opencsv</artifactId>
+            <version>${opencsv.version}</version>
+        </dependency>
+
+        <!-- ============ Secrets: local .secret.env loading ============ -->
+        <dependency>
+            <groupId>io.github.cdimascio</groupId>
+            <artifactId>dotenv-java</artifactId>
+            <version>${dotenv.version}</version>
+        </dependency>
+
+        <!-- ============ Utilities ============ -->
+        <!-- StringUtils/RandomStringUtils etc. for RandomDataUtils, masking, null-safety -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>${commons-lang3.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>web-mobile-api-framework</finalName>
+        <!-- config/ lives at the repo root, not nested under src/main/resources, so a tester
+             can find and edit dev/qa/uat/staging.properties directly without navigating the
+             Maven source tree - see README.md's "Environment configuration". Declaring any
+             <resources> here requires re-declaring the default src/main/resources explicitly
+             (Maven does not merge it in silently once you add a custom entry), so both are
+             listed. targetPath places these on the classpath at "config/..." - the exact path
+             ConfigManager already expects - so no framework code changes are needed. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>config</directory>
+                <targetPath>config</targetPath>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <!-- Without this, Jackson cannot introspect Java record component names via
+                         reflection and silently binds request/response records (com.framework.api.requests/
+                         responses, Phase 7) to default values (0, null) instead of failing loudly - found
+                         in practice deserializing BookingResponse (see Phase 7 summary), not assumed. -->
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <!-- Deliberately no <suiteXmlFiles>/<groups> here, and no profile that adds them:
+                         every test-selection concern (individual test, group, parallel mode/thread
+                         count, browser, environment) is driven entirely by command-line -D flags
+                         against Surefire's own classpath-wide TestNG discovery - see README.md's
+                         "Maven commands" section. Selecting a different subset never requires editing
+                         this file or any suite XML (there is none checked in). -D system properties
+                         (env, browser, headless, groups, excludedGroups, parallel, threadCount, ...)
+                         are forwarded to the forked test JVM by Surefire's systemPropertiesFile default
+                         behavior; they are deliberately NOT re-declared here via systemPropertyVariables
+                         with ${...} defaults, because an unset Maven property interpolates to an empty
+                         string (not "undefined"), which would silently defeat ConfigManager's own "dev"
+                         fallback. -->
+                    <!-- Allure needs to weave test lifecycle via AspectJ for step/attachment capture -->
+                    <argLine>
+                        -javaagent:"${settings.localRepository}"/org/aspectj/aspectjweaver/${aspectj.version}/aspectjweaver-${aspectj.version}.jar
+                    </argLine>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.aspectj</groupId>
+                        <artifactId>aspectjweaver</artifactId>
+                        <version>${aspectj.version}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+        </plugins>
+    </build>
+</project>

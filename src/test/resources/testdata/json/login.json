@@ -1,0 +1,10 @@
+{
+  "validLogin": {
+    "email": "${{EVENTHUB_EMAIL}}",
+    "password": "${{EVENTHUB_PASSWORD}}"
+  },
+  "invalidLogin": {
+    "email": "${{EVENTHUB_EMAIL}}",
+    "password": "DefinitelyWrongPassword1!"
+  }
+}

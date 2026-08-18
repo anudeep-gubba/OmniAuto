@@ -1,0 +1,14 @@
+{
+  "iosLocalA": {
+    "platform": "ios",
+    "deviceName": "iPhone 17 Pro",
+    "platformVersion": "26.2",
+    "appPath": "apps/swag.app"
+  },
+  "iosLocalB": {
+    "platform": "ios",
+    "deviceName": "iPhone 17",
+    "platformVersion": "26.2",
+    "appPath": "apps/swag.app"
+  }
+}

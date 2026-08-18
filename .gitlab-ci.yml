@@ -1,0 +1,74 @@
+# Phase 13 (requirement.md section 26). Mirrors the same `mvn clean test -Denv=qa
+# -Dgroups=... -Dbrowser=chrome -Dheadless=true` shape used locally and in the other two CI
+# configs - see CI_CD.md for the full picture across all three CI systems. GROUPS defaults
+# to blank (every group) rather than requirement.md's illustrative "regression" - verified
+# live that this codebase's tests were never actually tagged with a "regression" group, and
+# -Dgroups=regression silently runs zero tests and still reports success. See CI_CD.md's
+# "found in practice" note.
+#
+# The standard maven:3.9-eclipse-temurin-17 image has no browser installed, so
+# before_script installs Chrome directly via apt-get. Swap this for your org's own
+# browser-enabled base image, or drop the step for an API-only pipeline variant
+# (GROUPS: "api", which needs no browser at all).
+#
+# Required CI/CD variables (Settings > CI/CD > Variables, masked + protected):
+#   EVENTHUB_EMAIL, EVENTHUB_PASSWORD
+# Resolved by SecretManager as CI/CD environment variables - highest precedence over
+# .secret.env, which is never present on a GitLab runner at all.
+#
+# Mobile is never run here (no emulator/Appium on a shared runner - see
+# [[local-mobile-test-env]]-equivalent note in CI_CD.md).
+
+image: maven:3.9-eclipse-temurin-17
+
+stages:
+  - test
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  ENV: "qa"
+  GROUPS: ""
+  BROWSER: "chrome"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .m2/repository
+
+.test_template: &test_template
+  stage: test
+  before_script:
+    # This base image has JDK+Maven but not a browser; install Chrome for Web tests.
+    # Skip this step (and pass BROWSER=firefox/edge from an image that already has one)
+    # for API-only pipelines, which need no browser at all.
+    - apt-get update -qq && apt-get install -y -qq wget gnupg
+    - wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
+    - echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+    - apt-get update -qq && apt-get install -y -qq google-chrome-stable
+  script:
+    - >
+      mvn -B clean test
+      -Denv=$ENV -Dgroups=$GROUPS -Dbrowser=$BROWSER -Dheadless=true
+      -DexcludedGroups=mobile,frameworkSelfTest
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - target/surefire-reports/
+      - logs/
+      - reports/extent/
+      - allure-results/
+      - target/screenshots/
+
+smoke:
+  <<: *test_template
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    GROUPS: "smoke"
+
+regression:
+  <<: *test_template
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
