@@ -1,8 +1,8 @@
 package com.tests.base;
 
 import com.framework.api.ApiContext;
-import com.framework.api.requests.AuthRequest;
-import com.framework.api.requests.CreateEventRequest;
+import com.tests.api.requests.AuthRequest;
+import com.tests.api.requests.CreateEventRequest;
 import com.framework.config.ConfigManager;
 import com.framework.constants.ConfigKeys;
 import com.framework.exceptions.TestDataException;

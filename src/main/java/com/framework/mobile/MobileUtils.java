@@ -58,13 +58,28 @@ public final class MobileUtils {
      * unrelated system dialog that can render moments after the first closes,
      * which was found in practice to otherwise race past this method
      * entirely (see Phase 6 summary).</p>
+     *
+     * <p>Android-specific false-positive found in practice: this app's own Flutter widgets
+     * (the Sign In button, the password show/hide toggle) render as real native {@code
+     * android.widget.Button} elements too (Flutter's Android accessibility bridge maps any
+     * semantics node flagged "is a button" to that class, not just genuine OS dialogs) -
+     * verified live via {@code uiautomator dump}: both carried {@code package="<app's own
+     * package>"}, unlike a real system dialog's buttons, which belong to a different package
+     * (the "android" system UI, Play Protect, ...). Without the {@code package} filter below,
+     * this method was tapping the login screen's own Sign In button on every single launch -
+     * submitting a blank form and leaving "Email/Password is required" showing before the test
+     * itself even started. iOS has no such native buttons of its own (XCUITest elements are
+     * never {@code android.widget.Button}), so the filter is a no-op there in practice.</p>
      */
     public static void dismissSystemDialogsIfPresent() {
         if (!(MobileDriverManager.getDriver() instanceof AndroidDriver driver)) {
             return;
         }
+        String ownAppPackage = driver.getCurrentPackage();
         for (int attempt = 1; attempt <= MAX_DIALOG_DISMISS_ATTEMPTS; attempt++) {
-            List<WebElement> buttons = driver.findElements(By.className("android.widget.Button"));
+            List<WebElement> buttons = driver.findElements(By.className("android.widget.Button")).stream()
+                    .filter(button -> !ownAppPackage.equals(button.getAttribute("package")))
+                    .toList();
             if (buttons.isEmpty()) {
                 return;
             }

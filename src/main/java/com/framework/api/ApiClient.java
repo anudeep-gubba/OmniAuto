@@ -26,8 +26,9 @@ import java.util.Map;
  * {@link #execute(ApiRequest)} call builds a brand-new REST Assured request
  * specification - nothing shared across threads there. The one piece of
  * state this class owns, the current bearer token, is deliberately
- * <b>thread-local</b> (category 3), set by
- * {@link com.framework.api.services.AuthenticationService#login} and
+ * <b>thread-local</b> (category 3), set by an application-specific auth
+ * service's {@code login()} (e.g. {@code com.tests.api.services.AuthenticationService}
+ * - application-specific, so it lives in {@code src/test}, not linkable from here) and
  * attached automatically to every subsequent call on that thread (unless
  * the call sets its own {@code Authorization} header) - the same "implicitly
  * available per-thread" ergonomics {@code WebDriverManager} gives Web

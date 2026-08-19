@@ -53,6 +53,16 @@ public final class MobileActions {
     public static void type(By locator, String value) {
         try {
             WebElement element = MobileWaits.waitForVisible(locator);
+            // Explicit tap-to-focus before typing - found in practice necessary on Android:
+            // an unfocused Flutter EditText's sendKeys()/clear() goes through the accessibility
+            // service's direct "set text" action, which visually updates the native element but
+            // never reaches Flutter's own TextEditingController, so the app's own form state
+            // stays empty (verified live: text appeared to type successfully - no exception,
+            // logged normally - yet the field rendered empty with "required" validation errors
+            // moments later). Tapping first opens a real IME/input-connection to the Flutter
+            // engine, so the following clear()/sendKeys() land as genuine key events instead.
+            // A no-op on iOS, where this was never an issue.
+            element.click();
             element.clear();
             element.sendKeys(value);
             LOGGER.info("Typed into element: {}", locator);

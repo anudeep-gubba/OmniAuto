@@ -16,7 +16,7 @@ import static org.testng.Assert.expectThrows;
 
 /**
  * Phase 4/6 validation for the mobile driver path. Since Phase 6, a real
- * local Android emulator and app (apps/swaglabs.apk) are available and every
+ * local Android emulator and app (apps/eventhub-app-release.apk) are available and every
  * {@code config/{env}.properties} defines working defaults for them (Phase 16 -
  * mobile is no longer dev-only; see {@code com.tests.mobile.*} for the actual
  * device/app validation this enables) - so the negative tests below force each

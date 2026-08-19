@@ -1,6 +1,6 @@
 {
   "devices": {
-    "android1": { "platform": "android", "deviceName": "Pixel_10", "platformVersion": "17" },
+    "android1": { "platform": "android", "deviceName": "Pixel_6a", "platformVersion": "16" },
     "ios1": { "platform": "ios", "deviceName": "iPhone 17 Pro", "platformVersion": "26.2" },
     "ios2": { "platform": "ios", "deviceName": "iPhone 17", "platformVersion": "26.2" }
   },

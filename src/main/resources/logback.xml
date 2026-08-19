@@ -69,23 +69,21 @@
     <logger name="com.tests" level="DEBUG"/>
 
     <!-- The business-narrative layer, per surface - Web/Mobile Page Objects and Components
-         (com.tests.*.pages/components), API Services (com.framework.api.services, the
-         business-level wrapper around ApiClient, requirement.md section 9/10's
-         "userService.createUser(request)" layer). Each of these already logs one line per
-         real action in plain language; that is the entire report, deliberately. -->
-    <logger name="com.tests.web.pages" level="DEBUG">
+         (com.tests.pages.*/com.tests.components.*, split by platform underneath), API Services
+         (com.tests.api.services - application-specific, same as page objects/components, so it
+         lives in src/test rather than com.framework; the business-level wrapper around
+         com.framework.api.ApiClient, requirement.md section 9/10's "userService.createUser(request)"
+         layer). Each of these already logs one line per real action in plain language; that is
+         the entire report, deliberately. Logged at their common parent package rather than one
+         logger per web/mobile leaf - logback's hierarchy already covers
+         com.tests.pages.web/com.tests.pages.mobile from com.tests.pages. -->
+    <logger name="com.tests.pages" level="DEBUG">
         <appender-ref ref="EXTENT"/>
     </logger>
-    <logger name="com.tests.web.components" level="DEBUG">
+    <logger name="com.tests.components" level="DEBUG">
         <appender-ref ref="EXTENT"/>
     </logger>
-    <logger name="com.tests.mobile.pages" level="DEBUG">
-        <appender-ref ref="EXTENT"/>
-    </logger>
-    <logger name="com.tests.mobile.components" level="DEBUG">
-        <appender-ref ref="EXTENT"/>
-    </logger>
-    <logger name="com.framework.api.services" level="DEBUG">
+    <logger name="com.tests.api.services" level="DEBUG">
         <appender-ref ref="EXTENT"/>
     </logger>
 
