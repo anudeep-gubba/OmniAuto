@@ -14,6 +14,17 @@ name: CI
 # Mobile is excluded (no emulator/Appium on a hosted runner), and so is `frameworkSelfTest`
 # (RetryBehaviorTest's deliberately-always-failing method - see its own Javadoc for why that
 # group exists).
+#
+# Audit finding fix: this used to run exactly one browser per job (a fixed 'chrome' default,
+# or whatever single value a manual dispatch passed) despite the framework supporting four -
+# cross-browser support was never actually exercised in CI. `smoke` (every PR) and the
+# automatic push-to-main `regression` job below now both run a real matrix over every browser
+# ubuntu-latest guarantees preinstalled (chrome, firefox - see README's Setup section; edge/
+# safari are not guaranteed present on this runner image, so are left to local/self-hosted
+# runs). `fail-fast: false` so one browser's failure doesn't cancel the other mid-run - two
+# independent signals, not one merged into whichever fails first. A manual `workflow_dispatch`
+# still runs its own single job at whatever browser input is given (default chrome), unchanged,
+# since a manual run is normally someone deliberately targeting one browser.
 
 on:
   pull_request:
@@ -43,9 +54,13 @@ env:
 
 jobs:
   smoke:
-    name: Smoke (every PR)
+    name: Smoke (every PR, ${{ matrix.browser }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
     steps:
       - uses: actions/checkout@v4
 
@@ -62,26 +77,69 @@ jobs:
       - name: Run smoke tests
         run: >
           mvn -B clean test
-          -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
+          -Denv=qa -Dgroups=smoke -Dbrowser=${{ matrix.browser }} -Dheadless=true
           -DexcludedGroups=mobile,frameworkSelfTest
 
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-reports
+          name: smoke-reports-${{ matrix.browser }}
           path: |
             target/surefire-reports/
             logs/
             reports/extent/
             allure-results/
             target/screenshots/
+            target/site/jacoco/
           if-no-files-found: ignore
           retention-days: 14
 
   regression:
-    name: Full regression (push to main / manual)
-    if: github.event_name != 'pull_request'
+    name: Full regression (push to main, ${{ matrix.browser }})
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Run regression suite
+        # -Dgroups is intentionally left blank - a push-to-main run is always "every group",
+        # never filtered; a nonexistent group name like the requirement doc's illustrative
+        # "regression" would instead silently run zero tests and still report success.
+        run: >
+          mvn -B clean test
+          -Denv=qa -Dgroups= -Dbrowser=${{ matrix.browser }} -Dheadless=true
+          -DexcludedGroups=mobile,frameworkSelfTest
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-reports-${{ matrix.browser }}
+          path: |
+            target/surefire-reports/
+            logs/
+            reports/extent/
+            allure-results/
+            target/screenshots/
+            target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  regression-manual:
+    name: Full regression (manual dispatch, single browser)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,10 +152,10 @@ jobs:
           cache: maven
 
       - name: Run regression suite
-        # -Dgroups is intentionally omitted when the dispatch input is blank (the default) -
-        # an empty value runs every group, confirmed live; a nonexistent group name like the
-        # requirement doc's illustrative "regression" would instead silently run zero tests
-        # and still report success.
+        # A manual dispatch honors whatever single browser/env/groups the person running it
+        # chose (defaults: qa/chrome/every group) - deliberately not the push job's [chrome,
+        # firefox] matrix, since a manual trigger is normally someone targeting one specific
+        # combination on purpose, not asking for the full cross-browser sweep.
         run: >
           mvn -B clean test
           -Denv=${{ github.event.inputs.env || 'qa' }}
@@ -110,12 +168,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: regression-reports
+          name: regression-manual-reports
           path: |
             target/surefire-reports/
             logs/
             reports/extent/
             allure-results/
             target/screenshots/
+            target/site/jacoco/
           if-no-files-found: ignore
           retention-days: 30

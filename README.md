@@ -55,8 +55,6 @@ depends on test code.
 - **Mobile needs local infra** (emulator/simulator + Appium server) — not available on a
   hosted CI runner, so `mobile` is excluded from CI by default. Use a self-hosted runner or
   BrowserStack.
-- **Masking is opt-in per call site** — `SensitiveDataMasker` isn't wired into Logback
-  globally; a new log/report line touching a secret must call `.mask()` itself.
 - **`@DataProvider` rows can leak secrets into Allure.** `allure-testng` records every row via
   its own `toString()`, bypassing the masker — give any row type with a secret field a custom
   masking `toString()` (see `DataDrivenLoginTest.LoginAttempt`).
@@ -186,7 +184,20 @@ environment variables:
 | `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` | Only when `mobile.device.provider=BROWSERSTACK` |
 
 Any value `SecretManager.get(...)` resolves is auto-masked in every subsequent log/report
-line. `${{KEY}}` placeholders resolve the same values in test data:
+line. Masking itself is systemic, not per-call-site: `com.framework.secrets.MaskingMessageConverter`
+(`%maskedMsg` in `logback.xml`, replacing the standard `%msg`) masks every CONSOLE/FILE line
+unconditionally, and `ExtentLoggingAppender` does the same directly — a new `logger.info(...)`
+anywhere that happens to touch a secret value is masked without anyone needing to remember
+`.mask()` at that call site.
+
+Masked output is `********-xxxxxxxx`, not a flat `********` — the suffix is a short
+deterministic fingerprint of the real value (same secret → same suffix, different secret →
+different suffix), so a report reader can tell "was the same email used three steps ago" or
+"did this run pick up a different dataset row than expected" without the real value ever
+appearing. Debugging a failure that needs the real value: `mvn test -Dmasking.enabled=false ...`
+shows it in full — local-only, since a CI environment (`CI`/`GITHUB_ACTIONS` env vars) ignores
+the flag unconditionally and always stays masked, so this can never leak into a shared report
+regardless of how the build was invoked. `${{KEY}}` placeholders resolve the same values in test data:
 
 ```json
 { "validLogin": { "email": "${{EVENTHUB_EMAIL}}", "password": "${{EVENTHUB_PASSWORD}}" } }
@@ -265,6 +276,19 @@ mvn test -Dgroups=frameworkSelfTest                               # proves retri
 Real groups this codebase tags tests with: `smoke`, `sanity`, `api`, `web`, `mobile`,
 `frameworkSelfTest`. A group name nothing is tagged with matches zero tests but still reports
 `BUILD SUCCESS` — check the printed test count.
+
+**Rerunning only what failed:** Surefire's TestNG provider writes
+`target/surefire-reports/testng-failed.xml` after every run — a suite file listing just the
+classes/methods that failed, regardless of the fact that this repo has no suite XML of its own.
+Feed it straight back in to rerun only those:
+
+```bash
+mvn -Dsurefire.suiteXmlFiles=target/surefire-reports/testng-failed.xml test
+```
+
+Confirmed live: after a run that failed one `MobileDriverFactoryTest` method, this reran
+exactly that method and nothing else. Overwritten by the next full run, so grab a copy first
+if you want to keep retrying a specific failure while iterating on other tests.
 
 **API** — every real class: `AuthenticationTest`, `DataDrivenLoginTest`,
 `DataDrivenEventCreationTest`, `EventBookingChainingTest`, `ApiContextChainingTest`.
@@ -458,6 +482,13 @@ BrowserStack capacity, since one local emulator only runs one session at a time.
 - **Screenshots** — `screenshot.mode` = `FAILURE` (default) | `EVERY_ACTION` | `DISABLED`.
 - **Retry** — `RetryAnalyzer` (`retry.max.count`, default 1) retries everything except
   `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`.
+- **Coverage** — `mvn test` also runs Jacoco (`jacoco-maven-plugin`, bound to the `test` phase
+  itself, not `verify`, so plain `mvn test` is enough): `target/site/jacoco/index.html` for the
+  human-readable report, and a `jacoco-check` execution that fails the build if `com.framework.*`
+  line coverage drops below 55% — calibrated to a real measured `mvn test
+  -DexcludedGroups=mobile,frameworkSelfTest -Dheadless=true` run (63.3% at the time this gate was
+  added), not guessed. Raise the floor as real coverage grows; never lower it to make a
+  regression pass.
 
 ## CI/CD
 
@@ -466,11 +497,19 @@ same `mvn` command shape you'd run locally:
 
 | Job | Trigger | Command shape |
 |---|---|---|
-| `smoke` | Every pull request | `-Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true -DexcludedGroups=mobile,frameworkSelfTest` |
-| `regression` | Push to `main`, or manual dispatch | Same shape, `env`/`groups`/`browser` overridable as dispatch inputs (blank `groups` = every group) |
+| `smoke` | Every pull request | Matrix over `chrome`/`firefox`: `-Denv=qa -Dgroups=smoke -Dbrowser=<matrix> -Dheadless=true -DexcludedGroups=mobile,frameworkSelfTest` |
+| `regression` | Push to `main` | Same matrix, `-Dgroups=` (every group) |
+| `regression-manual` | Manual dispatch | Single browser — `env`/`groups`/`browser` from the dispatch inputs (default `qa`/every group/`chrome`) |
 
-Both jobs archive `target/surefire-reports/`, `logs/`, `reports/extent/`,
-`allure-results/`, and `target/screenshots/` regardless of pass/fail.
+`smoke`/`regression` run a real `chrome`+`firefox` matrix (`fail-fast: false`, so one browser's
+failure doesn't cancel the other) — `ubuntu-latest` only guarantees Chrome and Firefox
+preinstalled, not Edge/Safari, so those stay local/self-hosted-only for now. A manual dispatch
+stays single-browser on purpose: it's normally someone deliberately targeting one specific
+combination, not asking for the full sweep.
+
+Every job archives `target/surefire-reports/`, `logs/`, `reports/extent/`, `allure-results/`,
+`target/screenshots/`, and `target/site/jacoco/` regardless of pass/fail (per-browser artifact
+names, since a matrix run can't share one name across its own legs).
 
 Secrets: repo **Settings > Secrets and variables > Actions**, for `EVENTHUB_EMAIL` /
 `EVENTHUB_PASSWORD` — any new key `SecretManager.get("KEY")` needs resolves against
@@ -559,11 +598,13 @@ simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via ove
 | Mobile fails with `SessionNotCreated` | No emulator/Appium server running — start both, or exclude `mobile`. |
 | `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag. Real ones: `smoke`, `sanity`, `api`, `web`, `mobile`, `frameworkSelfTest`. Check the printed test count. |
 | `@BeforeMethod`-driven setup silently doesn't run under `-Dgroups=X`, test fails with 401 | Missing `alwaysRun = true` on that `@BeforeMethod`. |
-| Masking looks missing on a new log/report line | Masking is opt-in per call site — add `.mask()` at that call site. |
-| A `@DataProvider` row with a secret leaks into `allure-results/` | Allure's own interceptor bypasses the masker via `toString()` — give the row type a custom masking `toString()`. |
+| Masking looks missing on a new log/report line | Shouldn't happen — CONSOLE/FILE/Extent mask every line unconditionally now (see Reporting). If it does, that line went through some other sink entirely (e.g. a raw `System.out.println`, or a custom appender bypassing `logback.xml`'s pattern), not a missed `.mask()` call. |
+| A report shows `********-xxxxxxxx` and you need the real value to debug a failure | `mvn test -Dmasking.enabled=false ...` — local only, ignored automatically in CI (see Configuration/Secrets). Two masked values with the same suffix are the same underlying secret, even without unmasking. |
+| A `@DataProvider` row with a secret leaks into `allure-results/` | A separate pathway from logging — Allure's own interceptor bypasses the masker via `toString()`. Give the row type a custom masking `toString()`. |
 | Web browser config looks wrong under `parallel="classes"` | `ConfigParameterListener` resets config before every invoked method — if this recurs, check nothing else caches a config value. |
 | `Log4j2 could not find a logging implementation` | Harmless — Apache POI's internal logger falling back to SimpleLogger. |
 | Selenium CDP version warnings | Harmless — Chrome's DevTools Protocol is newer than Selenium's bundled client. |
+| Want to rerun just what failed, not the whole run | `mvn -Dsurefire.suiteXmlFiles=target/surefire-reports/testng-failed.xml test` — see [Running tests](#running-tests). |
 
 **Where to look:** `logs/framework.log` (MDC-tagged per thread), `reports/extent/index.html`,
 `allure-results/` (`allure serve allure-results`), `target/screenshots/`,

@@ -34,12 +34,19 @@ import static org.testng.Assert.assertTrue;
  * <p>Capturing at the {@code com.framework} logger, not just {@code ApiClient}'s own, is
  * deliberate: an earlier version of this test attached only to {@code ApiClient} and passed
  * while {@link AuthenticationService} was logging the raw email completely unmasked one class
- * away - masking is opt-in per call site (each one must call
- * {@link com.framework.secrets.SensitiveDataMasker#mask(String)} itself; nothing enforces it
- * framework-wide), so a regression test narrow enough to only watch the one class already
- * known to be careful proves nothing about the rest of the framework. Capturing at the
- * package level catches exactly that class of gap again if it recurs anywhere under
- * {@code com.framework}.</p>
+ * away. Capturing at the package level catches exactly that class of gap again if it recurs
+ * anywhere under {@code com.framework}.</p>
+ *
+ * <p><b>Still exercises call-site masking specifically, not the newer converter-level
+ * guarantee:</b> this test attaches a raw {@link ListAppender} directly to the logger, which
+ * reads {@code ILoggingEvent}s straight from dispatch - the same path
+ * {@code com.framework.secrets.MaskingMessageConverter} (wired into {@code logback.xml}'s
+ * CONSOLE/FILE pattern) never touches, since a {@code PatternLayout}/encoder only runs inside a
+ * real appender like {@code ConsoleAppender}/{@code RollingFileAppender}. This test therefore
+ * still proves per-call-site masking specifically (every log call along this path already calls
+ * {@link com.framework.secrets.SensitiveDataMasker#mask(String)} itself) - see
+ * {@code MaskingMessageConverterTest} for direct proof of the converter-level guarantee that now
+ * additionally protects CONSOLE/FILE/Extent even when a call site forgets to.</p>
  */
 public class LoggingMaskingIntegrationTest {
 

@@ -11,11 +11,20 @@
     com.framework.listeners.TestLoggingContextListener - the one piece of context %thread
     alone does not give you once several tests share a pooled thread under
     parallel="methods"/"classes" (requirement.md section 20).
+
+    %maskedMsg (com.framework.secrets.MaskingMessageConverter, registered below) replaces the
+    standard %msg conversion word - every line through CONSOLE/FILE is passed through
+    SensitiveDataMasker.mask(...) unconditionally before being written, so masking no longer
+    depends on the log call site remembering to call .mask() itself (audit finding: it
+    previously did, framework-wide). See that class's own javadoc for exactly what this does
+    and does not cover.
 -->
 <configuration>
 
+    <conversionRule conversionWord="maskedMsg" class="com.framework.secrets.MaskingMessageConverter"/>
+
     <property name="LOG_DIR" value="logs"/>
-    <property name="LOG_PATTERN" value="%d{HH:mm:ss.SSS} [%thread] [%X{test}] %-5level %logger{36} - %msg%n"/>
+    <property name="LOG_PATTERN" value="%d{HH:mm:ss.SSS} [%thread] [%X{test}] %-5level %logger{36} - %maskedMsg%n"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
