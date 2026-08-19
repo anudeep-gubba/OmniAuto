@@ -4,10 +4,10 @@ import com.framework.config.ConfigManager;
 import com.framework.secrets.SecretManager;
 import com.framework.web.WebUtils;
 import com.framework.web.WebWaits;
-import com.tests.web.components.EventCardComponent;
-import com.tests.web.pages.EventsPage;
-import com.tests.web.pages.HomePage;
-import com.tests.web.pages.LoginPage;
+import com.tests.components.web.EventCardComponent;
+import com.tests.pages.web.EventsPage;
+import com.tests.pages.web.HomePage;
+import com.tests.pages.web.LoginPage;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -19,7 +19,7 @@ import static org.testng.Assert.assertTrue;
 
 /**
  * Phase 5 validation for the Component Object Model (requirement.md &sect;7):
- * {@link com.tests.web.components.HeaderComponent} as a page-wide singleton
+ * {@link com.tests.components.web.HeaderComponent} as a page-wide singleton
  * component, {@link EventCardComponent} as an N-repeated component, on
  * eventhub.rahulshettyacademy.com's real event listing.
  */

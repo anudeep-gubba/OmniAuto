@@ -201,9 +201,12 @@
                 <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <!-- Without this, Jackson cannot introspect Java record component names via
-                         reflection and silently binds request/response records (com.framework.api.requests/
-                         responses, Phase 7) to default values (0, null) instead of failing loudly - found
-                         in practice deserializing BookingResponse (see Phase 7 summary), not assumed. -->
+                         reflection and silently binds request/response records (com.tests.api.requests/
+                         responses, application-specific - Phase 7) to default values (0, null) instead of
+                         failing loudly - found in practice deserializing BookingResponse (see Phase 7
+                         summary), not assumed. Applies to both default-compile and default-testCompile
+                         (no per-execution override below), which matters now that these records live in
+                         src/test rather than src/main. -->
                     <parameters>true</parameters>
                 </configuration>
             </plugin>

@@ -57,7 +57,7 @@ depends on test code.
   BrowserStack.
 - **`@DataProvider` rows can leak secrets into Allure.** `allure-testng` records every row via
   its own `toString()`, bypassing the masker — give any row type with a secret field a custom
-  masking `toString()` (see `DataDrivenLoginTest.LoginAttempt`).
+  masking `toString()` instead of relying on a generated record `toString()`.
 - **A missing `alwaysRun = true` fails silently** — TestNG skips a `@BeforeMethod` with no
   groups of its own whenever `-Dgroups=` is active, so its `@Test` runs unset-up (e.g. 401s).
 - **BrowserStack app upload is manual** — one-time per app version, via their own API.
@@ -87,11 +87,11 @@ depends on test code.
 ## Project structure
 
 ```
-src/main/java/com/framework/
-    api/            ApiClient, ApiRequest/Response, ApiContext, ApiHeaders
-        requests/   Request DTOs (Java records)
-        responses/  Response DTOs (Java records)
-        services/   AuthenticationService, EventService, BookingService
+src/main/java/com/framework/     <- core framework: generic, reusable, knows nothing about
+                                     eventhub specifically. Ships as the framework's own
+                                     compiled output; src/test never appears in it.
+    api/            ApiClient, ApiRequest/Response, ApiContext, ApiHeaders - a generic REST
+                    client engine. No knowledge of any specific endpoint/DTO shape.
     config/         ConfigManager (4-tier precedence)
     constants/      ConfigKeys
     context/        VariableManager (thread-safe runtime variable store)
@@ -100,22 +100,43 @@ src/main/java/com/framework/
     exceptions/     FrameworkException and subtypes
     listeners/      TestNG listeners (see table below)
     mobile/         BaseMobilePage, BaseMobileComponent, MobileActions, MobileUtils, MobileWaits
+                    - base classes only; no concrete screen lives here.
     reporting/      ExtentManager, ExtentLoggingAppender, AllureManager, ReportManager
     secrets/        SecretManager, SensitiveDataMasker
     testdata/       TestDataManager, TestData, JSON/YAML/CSV/Excel readers, PlaceholderResolver
     utils/          JsonUtils, FileUtils, ScreenshotUtils, DateUtils, RandomDataUtils, EnumUtils
-    web/            BasePage, BaseComponent, WebActions, WebUtils, WebWaits
+    web/            BasePage, BaseComponent, WebActions, WebUtils, WebWaits - base classes only;
+                    no concrete page lives here.
 
-src/test/java/com/tests/
-    api/     API tests (authentication, chaining, data-driven)
-    base/    Framework-level validation (config, secrets, masking, retry, test data)
-    mobile/  Mobile tests + Page Objects (Sauce Labs SwagLabs demo app)
-    web/     Web tests + Page Objects + Components (eventhub.rahulshettyacademy.com)
+src/test/java/com/tests/         <- application-specific: everything that only makes sense
+                                     because the app under test is eventhub - Web, Mobile, and
+                                     API surfaces of the same product.
+    api/              API test specs (AuthApiTest, EventApiTest, BookingApiTest, SystemApiTest,
+                      EventBookingE2EFlowTest - positive/negative/E2E, live API, no mocks)
+        services/     AuthenticationService, EventService, BookingService, SystemService -
+                      eventhub's own endpoints; wrap com.framework.api.ApiClient
+        requests/     eventhub-specific request DTOs (Java records)
+        responses/    eventhub-specific response DTOs (Java records)
+    base/             Framework-level validation (config, secrets, masking, retry, test data)
+                      - the one part of src/test that tests com.framework itself, not the app
+    mobile/           Mobile test specs - eventhub's own Flutter app (LoginTest, EventsTest,
+                      EventBookingE2EFlowTest - positive/negative/E2E; MultiDeviceParallelTest
+                      - device-matrix infra, app-agnostic). Replaces an earlier suite against
+                      the public Sauce Labs SwagLabs demo app (removed).
+    web/              Web test specs (eventhub.rahulshettyacademy.com)
+    pages/web/        Web Page Objects (LoginPage, HomePage, EventsPage)
+    pages/mobile/     Mobile Page Objects (LoginPage, HomePage, EventsPage, EventDetailPage,
+                      BookingConfirmationPage, MyBookingsPage)
+    components/web/   Web Components (HeaderComponent, EventCardComponent)
+    components/mobile/ Mobile Components (HeaderComponent, EventCardComponent)
 
 config/             dev/qa.properties + mobile-devices.json — repo root, not
                     src/main/resources, so they're easy to find and edit; each
                     {env}.properties file is fully self-contained
-apps/               Mobile binaries (swaglabs.apk, swag.app)
+apps/               Mobile binaries: eventhub-app-release.apk (Android, universal - installs on
+                    both a real device and an x86_64 emulator) and eventhub-app-simulator.app
+                    (iOS Simulator build - see "Mobile" below for why the simulator build
+                    specifically, not just "the iOS app").
 .github/workflows/  CI pipeline (GitHub Actions)
 ```
 
@@ -236,6 +257,26 @@ TestDataManager.load("events.csv").dataProvider(CreateEventRequest.class);
 Raw records are cached once; `${{...}}` placeholders resolve fresh on every access, so a
 value produced mid-test (e.g. `${{eventId}}`) resolves correctly.
 
+**One file per surface, never shared.** `testdata/json/login.json`/`events.csv` back the Web
+suite; `testdata/json/mobile-login.json`/`mobile-booking.json` back the Mobile suite -
+separate files even though both suites log into the same eventhub account, so a change made
+for one surface (e.g. a new Mobile-only negative case) never risks a Web test picking up an
+unrelated row. Every row in the Mobile files carries `testCaseId`/`testCaseName`/`description`
+fields alongside the actual data (`com.tests.mobile.MobileLoginTestCase`/
+`MobileBookingTestCase`) - not asserted on, purely so a failure, an Extent/Allure report line,
+or someone skimming the JSON can identify which test case a row belongs to independently of
+the Java method name:
+
+```json
+"malformedEmail": {
+  "testCaseId": "TC-MOB-LOGIN-004",
+  "testCaseName": "malformedEmailShowsInvalidEmailValidation",
+  "description": "An email with no '@' fails Flutter's own client-side format validation...",
+  "email": "not-an-email",
+  "password": "SomePassword1!"
+}
+```
+
 **Which format a bare name reads from is a config property, not hardcoded per call site.**
 `load("login.json")` always reads JSON, extension and all — but `load("login")`, with no
 extension, resolves against `testdata.format` in `config/{env}.properties` (`json` unless
@@ -264,9 +305,9 @@ mvn clean compile
 mvn test -DexcludedGroups=mobile,frameworkSelfTest
 
 mvn clean test -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
-mvn test -Dtest=AuthenticationTest                              # one class
-mvn test -Dtest=AuthenticationTest#loginWithExistingAccountWorks # one method
-mvn test -Dtest=AuthenticationTest,EventBookingChainingTest      # several classes
+mvn test -Dtest=AuthApiTest                                      # one class
+mvn test -Dtest=AuthApiTest#loginWithExistingAccountWorks        # one method
+mvn test -Dtest=AuthApiTest,EventBookingE2EFlowTest               # several classes
 mvn test -Dgroups=smoke,api                                      # several groups
 mvn test -Dgroups=sanity -DexcludedGroups=mobile                 # one live test per surface
 mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4          # parallel
@@ -290,16 +331,15 @@ Confirmed live: after a run that failed one `MobileDriverFactoryTest` method, th
 exactly that method and nothing else. Overwritten by the next full run, so grab a copy first
 if you want to keep retrying a specific failure while iterating on other tests.
 
-**API** — every real class: `AuthenticationTest`, `DataDrivenLoginTest`,
-`DataDrivenEventCreationTest`, `EventBookingChainingTest`, `ApiContextChainingTest`.
+**API** — every real class: `AuthApiTest`, `EventApiTest`, `BookingApiTest`, `SystemApiTest`,
+`EventBookingE2EFlowTest`.
 
 ```bash
 mvn test -Dgroups=api                                              # every API test
 mvn test -Dgroups=smoke,api                                        # just the smoke-tagged ones
-mvn test -Dtest=AuthenticationTest                                 # one class
-mvn test -Dtest=AuthenticationTest#loginWithExistingAccountWorks    # one method
-mvn test -Dtest=AuthenticationTest,EventBookingChainingTest         # several classes
-mvn test -Dtest=DataDrivenLoginTest                                 # data-driven - every @DataProvider row runs
+mvn test -Dtest=AuthApiTest                                        # one class
+mvn test -Dtest=AuthApiTest#loginWithExistingAccountWorks           # one method
+mvn test -Dtest=AuthApiTest,EventBookingE2EFlowTest                 # several classes
 mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4            # parallel, one class per thread
 mvn test -Dgroups=api -Dparallel=methods -DthreadCount=8            # parallel, one method per thread
 mvn test -Denv=dev -Dgroups=api                                     # against dev instead of qa
@@ -319,22 +359,42 @@ mvn test -Dgroups=web -Dparallel=classes -DthreadCount=4 -Dheadless=true
 mvn test -Denv=dev -Dgroups=web -Dbrowser=chrome -Dheadless=true      # against dev instead of qa
 ```
 
-**Mobile** — every real class: `LoginTest`, `ProductsTest`, `MultiDeviceParallelTest`. Device
-details are never passed on the CLI; whether it runs sequentially on one device or in
-parallel across several depends only on whether `-Dparallel` is present:
+**Mobile** — every real class: `LoginTest`, `EventsTest`, `EventBookingE2EFlowTest`,
+`MultiDeviceParallelTest` (device-matrix infra, app-agnostic). eventhub's own Flutter app
+(replaces an earlier suite against the public Sauce Labs SwagLabs demo app, removed) - login,
+browse/search events, and a full login→book→confirm→My Bookings journey, each verified live
+against a real iPhone 17 Pro/iPhone 17 Simulator session before being committed (Appium +
+XCUITest, real page source, not guessed locators). Device details are never passed on the
+CLI; whether it runs sequentially on one device or in parallel across several depends only on
+whether `-Dparallel` is present:
 
 ```bash
 mvn test -Dgroups=mobile                                              # sequential, one device (android by default)
 mvn test -Dgroups=mobile -Dmobile.platform=ios                        # sequential, iOS instead - one line, no other flags
 mvn test -Dgroups=mobile -Dtest=LoginTest                             # one class
-mvn test -Dgroups=mobile -Dtest=LoginTest#validLoginNavigatesToProductsPage  # one method
-mvn test -Dgroups=mobile -Dtest=LoginTest,ProductsTest                # several classes
+mvn test -Dgroups=mobile -Dtest=LoginTest#validCredentialsLogInAndShowHomeScreen  # one method
+mvn test -Dgroups=mobile -Dtest=LoginTest,EventsTest,EventBookingE2EFlowTest  # several classes
 mvn test -Dgroups=mobile -Dparallel=methods -DthreadCount=3           # pooled across every device (work queue)
 mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK ...    # real device / cloud farm, see BrowserStack
 mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachDeviceInTheMatrixConcurrently  # same test, every device at once
 mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently
 mvn test -Denv=dev -Dgroups=mobile                                    # against dev instead of qa
 ```
+
+**iOS needs a Simulator-targeted build specifically, not just "the iOS app".** A real-device
+`.ipa`/`.app` (built for the `iphoneos` SDK) cannot install on a Simulator regardless of
+Appium config - verified live, the exact failure is `Simulator architecture is not supported
+by the <bundle-id> application`. `apps/eventhub-app-simulator.app` is a Simulator build
+specifically (`iphonesimulator` SDK, a universal `x86_64`/`arm64` binary - confirm with
+`lipo -info`/`file` if a future rebuild ever needs re-checking). Android has no such split:
+`apps/eventhub-app-release.apk` bundles an `x86_64` slice alongside the device ABIs, so the
+one file installs on both a real device and an emulator.
+
+This build's login always succeeds regardless of the password typed - verified live, its own
+mock backend authenticates any well-formed credentials as one fixed demo account - so
+`LoginTest`'s negative cases are the client-side form validation Flutter itself enforces
+(blank fields, a malformed email), not a server-rejected wrong password; see `LoginPage`'s
+class javadoc.
 
 Every device the framework knows about lives in one shared file, `config/mobile-devices.json`
 — not `config/{env}.properties`, and not duplicated per environment, since the same local
@@ -363,7 +423,7 @@ emulator/simulator is used regardless of `-Denv`:
   `androidList` + `iosList` combined as a work queue — whichever device finishes first picks
   up the next queued test, not "one device per thread regardless of load," and not "the same
   test on every device" (that's the `matrices` case below). Existing test classes
-  (`LoginTest`, `ProductsTest`, ...) need no changes to participate.
+  (`LoginTest`, `EventsTest`, ...) need no changes to participate.
 - **Which app binary** each platform installs is an environment/build concern, so it's in
   `config/{env}.properties`, not the JSON file: `mobile.app.path.android`,
   `mobile.app.path.ios` — one entry per platform, since every device on that platform runs the
@@ -416,16 +476,20 @@ Page Objects extend `BasePage`, expose business-level actions only, and log each
 @BeforeMethod(alwaysRun = true)
 public void launchApp() { MobileDriverManager.getDriver(); }
 
-@Test(groups = {"smoke", "mobile"})
-public void standardUserCanLogIn() {
-    new LoginPage().enterUsername(USERNAME).enterPassword(PASSWORD).tapLogin();
-    assertTrue(new ProductsPage().isDisplayed());
+@Test(groups = {"smoke", "sanity", "mobile"})
+public void validCredentialsLogInAndShowHomeScreen() {
+    new LoginPage().enterEmail(SecretManager.get("EVENTHUB_EMAIL"))
+            .enterPassword(SecretManager.get("EVENTHUB_PASSWORD"))
+            .tapSignIn();
+    assertTrue(new HomePage().isDisplayed());
 }
 ```
 
 Mirrors Web exactly (`BaseMobilePage`, W3C `PointerInput` gestures, not the deprecated
-`TouchAction`). The same `test-*` accessibility identifiers work unmodified on Android and
-iOS.
+`TouchAction`). Locators are the Flutter app's own Semantics labels - the same value Appium
+exposes as `accessibilityId` on iOS (`content-desc` on Android, since one Flutter Semantics
+tree drives both) - rather than dedicated `test-*` ids (the earlier SwagLabs app's own
+convention, not something this codebase controls).
 
 **API:**
 
@@ -438,9 +502,10 @@ public void loginWithExistingAccountWorks() {
 }
 ```
 
-Services (`AuthenticationService`, `EventService`, `BookingService`) wrap `ApiClient` — the
-only place REST Assured is called from. Every request/response is logged (masked) and
-attached to the Allure report automatically.
+Application-specific services (`com.tests.api.services` — `AuthenticationService`,
+`EventService`, `BookingService`, `SystemService`) wrap `com.framework.api.ApiClient`, the only
+place REST Assured is called from. Every request/response is logged (masked) and attached to
+the Allure report automatically.
 
 **API chaining:**
 
@@ -585,10 +650,10 @@ tests run that way.
 
 Validated live: `-Dparallel=classes -DthreadCount=4` with genuinely concurrent Chrome/Firefox
 sessions and API calls (distinct thread names/overlapping timestamps in
-`logs/framework.log`); `-Dparallel=methods` via `invocationCount`/`threadPoolSize` stress
-tests in `ApiContextChainingTest`/`TestDataManagerTest`; and a real Android emulator + iOS
-simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via overlapping
-`POST /session` requests in Appium's own server log.
+`logs/framework.log`) across the `com.tests.api` classes; `-Dparallel=methods` via
+`invocationCount`/`threadPoolSize` stress tests in `TestDataManagerTest`; and a real Android
+emulator + iOS simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via
+overlapping `POST /session` requests in Appium's own server log.
 
 ## Troubleshooting
 
