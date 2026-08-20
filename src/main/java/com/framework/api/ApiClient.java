@@ -27,7 +27,7 @@ import java.util.Map;
  * specification - nothing shared across threads there. The one piece of
  * state this class owns, the current bearer token, is deliberately
  * <b>thread-local</b> (category 3), set by an application-specific auth
- * service's {@code login()} (e.g. {@code com.tests.api.services.AuthenticationService}
+ * service's {@code login()} (e.g. {@code com.tests.application.services.AuthenticationService}
  * - application-specific, so it lives in {@code src/test}, not linkable from here) and
  * attached automatically to every subsequent call on that thread (unless
  * the call sets its own {@code Authorization} header) - the same "implicitly

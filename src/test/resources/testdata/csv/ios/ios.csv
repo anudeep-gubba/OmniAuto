@@ -1,0 +1,6 @@
+"name","metadata.testCaseId","metadata.testCaseName","data.email","data.password","data.fullName","data.phone"
+"validCredentials","TC-IOS-LOGIN-001","User logs in successfully with valid credentials and lands on the home screen","${{EVENTHUB_EMAIL}}","${{EVENTHUB_PASSWORD}}","",""
+"incorrectPassword","TC-IOS-LOGIN-002","Login still succeeds when the password is incorrect, against this build's mock backend","${{EVENTHUB_EMAIL}}","DefinitelyTheWrongPassword1!","",""
+"blankCredentials","TC-IOS-LOGIN-003","Submitting the login form with both fields blank shows required-field validation","","","",""
+"malformedEmail","TC-IOS-LOGIN-004","Submitting a malformed email shows an invalid-email validation error","not-an-email","SomePassword1!","",""
+"standardBooking","TC-IOS-BOOK-001","Customer completes a full booking journey from login through confirmation and My Bookings","","","Framework QA Tester","+91 90000 00000"

@@ -20,7 +20,8 @@ import java.util.Map;
  * Reads {@code .xlsx}/{@code .xls} test data: row-oriented like CSV, taking the first
  * sheet's row 0 as headers and every subsequent non-blank row as one record. A column
  * literally named {@code name} opts a workbook into {@link TestData#get(String)} lookups,
- * same convention as {@link CsvDataReader}.
+ * same convention as {@link CsvDataReader} - including its dotted-column nesting convention
+ * (e.g. {@code metadata.testCaseId}, {@code data.email}) via {@link TestDataReader#unflatten}.
  *
  * <p>{@link DataFormatter} renders every cell to the same text Excel itself would display
  * (so a numeric cell showing {@code 50} becomes the string {@code "50"}, not
@@ -50,7 +51,7 @@ final class ExcelDataReader implements TestDataReader {
                 if (row == null || isBlankRow(row, headers.size())) {
                     continue;
                 }
-                records.add(toRecord(row, headers));
+                records.add(TestDataReader.unflatten(toRecord(row, headers)));
             }
             return records;
         } catch (IOException e) {
@@ -69,8 +70,8 @@ final class ExcelDataReader implements TestDataReader {
         return headers;
     }
 
-    private static Map<String, Object> toRecord(Row row, List<String> headers) {
-        Map<String, Object> record = new LinkedHashMap<>();
+    private static Map<String, String> toRecord(Row row, List<String> headers) {
+        Map<String, String> record = new LinkedHashMap<>();
         for (int i = 0; i < headers.size(); i++) {
             Cell cell = row.getCell(i);
             record.put(headers.get(i), cell == null ? "" : DATA_FORMATTER.formatCellValue(cell));

@@ -1,0 +1,39 @@
+validCredentials:
+  metadata:
+    testCaseId: TC-AND-LOGIN-001
+    testCaseName: User logs in successfully with valid credentials and lands on the
+      home screen
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+    password: "${{EVENTHUB_PASSWORD}}"
+incorrectPassword:
+  metadata:
+    testCaseId: TC-AND-LOGIN-002
+    testCaseName: "Login still succeeds when the password is incorrect, against this\
+      \ build's mock backend"
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+    password: DefinitelyTheWrongPassword1!
+blankCredentials:
+  metadata:
+    testCaseId: TC-AND-LOGIN-003
+    testCaseName: Submitting the login form with both fields blank shows required-field
+      validation
+  data:
+    email: ""
+    password: ""
+malformedEmail:
+  metadata:
+    testCaseId: TC-AND-LOGIN-004
+    testCaseName: Submitting a malformed email shows an invalid-email validation error
+  data:
+    email: not-an-email
+    password: SomePassword1!
+standardBooking:
+  metadata:
+    testCaseId: TC-AND-BOOK-001
+    testCaseName: Customer completes a full booking journey from login through confirmation
+      and My Bookings
+  data:
+    fullName: Framework QA Tester
+    phone: +91 90000 00000

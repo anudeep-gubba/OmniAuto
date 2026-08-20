@@ -1,0 +1,42 @@
+package com.tests.application.testdata.api;
+
+import com.tests.tests.api.EventApiTest;
+import com.tests.tests.api.EventBookingE2EFlowTest;
+import com.framework.testdata.TestCaseMetadata;
+import com.framework.testdata.TestCaseRecord;
+
+/**
+ * One row of {@code testdata/json/api/api.json} feeding an {@code /events} payload in {@link
+ * EventApiTest} (and the event-creation steps inside {@link EventBookingE2EFlowTest}). Splits
+ * {@code metadata} ({@link TestCaseMetadata}) from the actual {@code data} ({@link
+ * EventPayloadData}), matching the JSON's own shape - see {@link
+ * com.tests.application.testdata.LoginTestCase} for the identical shared-shape convention
+ * surface. {@code EventPayloadData} is nested here rather than its own file - see {@link
+ * AuthApiTestCase} for why.
+ */
+public record EventPayloadTestCase(TestCaseMetadata metadata, EventPayloadData data) implements TestCaseRecord<EventPayloadTestCase.EventPayloadData> {
+
+    /**
+     * The {@code data} object of one row - see {@link EventPayloadTestCase}.
+     *
+     * <p>{@code title} is deliberately not a field here: every event title in these tests is
+     * either a fixed literal that carries no data-driven value of its own, or has a per-run
+     * unique suffix appended in Java ({@code RandomDataUtils.uniqueId()}) so two parallel runs
+     * never collide on the same title - it stays in the Java call site either way. {@code
+     * daysInFuture} is resolved via {@code DateUtils.futureIsoDate(int)} at the point of use;
+     * {@code eventDate} is only set on rows that instead need a fixed, literal (often past)
+     * date, e.g. to trigger the "must be in the future" validation error - the two are mutually
+     * exclusive per row.</p>
+     */
+    public record EventPayloadData(
+            String eventDescription,
+            String category,
+            String venue,
+            String city,
+            Integer daysInFuture,
+            String eventDate,
+            double price,
+            int totalSeats,
+            String imageUrl) {
+    }
+}

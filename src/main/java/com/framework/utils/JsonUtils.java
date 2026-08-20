@@ -8,7 +8,7 @@ import com.framework.exceptions.ApiException;
 
 /**
  * Shared JSON (de)serialization for the framework: application-specific request/response DTOs
- * ({@code com.tests.api.requests}/{@code responses} - src/test, Phase 7) today,
+ * ({@code com.tests.application.requests}/{@code com.tests.application.responses} - src/test, Phase 7) today,
  * JSON test-data files ({@code JsonDataReader}, Phase 9) later - one
  * {@link ObjectMapper}, one configuration, instead of each caller building
  * its own (RULE 5).

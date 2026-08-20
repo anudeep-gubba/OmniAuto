@@ -1,9 +1,0 @@
-{
-  "standardBooking": {
-    "testCaseId": "TC-MOB-BOOK-001",
-    "testCaseName": "bookingFlowFromLoginThroughConfirmationAndMyBookingsWorksEndToEnd",
-    "description": "Login -> browse events -> Book Now on the first listed event -> fill attendee details -> Confirm Booking -> a booking reference is generated -> the same event/reference appears in My Bookings.",
-    "fullName": "Framework QA Tester",
-    "phone": "+91 90000 00000"
-  }
-}
