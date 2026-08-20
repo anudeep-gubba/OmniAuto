@@ -5,3 +5,5 @@ com.framework.listeners.ApiContextListener
 com.framework.listeners.DriverCleanupListener
 com.framework.listeners.ExtentReportingListener
 com.framework.listeners.ScreenshotCaptureListener
+com.framework.listeners.AllureParameterMaskingListener
+com.framework.listeners.BeforeMethodAlwaysRunListener
