@@ -10,8 +10,8 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertEquals;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Mobile Component Object Model coverage for the eventhub app's Events listing:
@@ -36,17 +36,17 @@ public class EventsTest extends BaseMobileTest {
         eventsPage = homePage.browseEvents();
     }
 
-    @Test(groups = "mobile")
+    @Test(groups = {"mobile", "events", "positive"})
     public void eventsListingShowsAtLeastOneEvent() {
         List<EventCardComponent> cards = eventsPage.getEventCards();
         assertTrue(cards.size() > 0, "Events listing should show at least one event.");
 
         EventCardComponent first = cards.get(0);
-        assertTrue(!first.getName().isBlank());
+        assertTrue(!first.getName().isBlank(), "First event card should display a non-blank name.");
         assertTrue(first.getPrice().startsWith("$"), "Price should be displayed as a dollar amount.");
     }
 
-    @Test(groups = "mobile")
+    @Test(groups = {"mobile", "events", "positive"})
     public void eachEventCardIsIndependentlyScoped() {
         // Proves BaseMobileComponent's root-scoping: reading N cards' names never returns the
         // same element twice or bleeds one card's data into another's.
@@ -58,10 +58,10 @@ public class EventsTest extends BaseMobileTest {
                 "Every event card should report its own distinct name.");
     }
 
-    @Test(groups = "mobile")
+    @Test(groups = {"mobile", "events", "positive"})
     public void bookNowNavigatesToEventDetailPage() {
         List<EventCardComponent> cards = eventsPage.getEventCards();
-        assertTrue(cards.size() > 0);
+        assertTrue(cards.size() > 0, "Events listing should show at least one event to tap Book Now on.");
 
         cards.get(0).tapBookNow();
 

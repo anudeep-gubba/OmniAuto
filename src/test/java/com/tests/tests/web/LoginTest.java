@@ -9,7 +9,7 @@ import com.tests.application.pages.web.HomePage;
 import com.tests.application.pages.web.LoginPage;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Phase 5 validation (requirement.md &sect;38 WEB checklist: valid login, invalid login)
@@ -39,7 +39,7 @@ public class LoginTest extends BaseWebTest {
     // Also "sanity": the narrowest possible "is the app fundamentally alive" checkpoint -
     // one representative live test per surface (Web/Mobile/API), distinct from and smaller
     // than "smoke" (broad - includes every framework-internal unit test too). See README.md.
-    @Test(groups = {"smoke", "sanity", "web"})
+    @Test(groups = {"smoke", "sanity", "web", "auth", "positive"})
     public void validLoginNavigatesToHomePage() {
         LoginData data = TestDataSurface.WEB.getCaseData("validLogin", LoginTestCase.class);
 
@@ -53,7 +53,7 @@ public class LoginTest extends BaseWebTest {
         assertTrue(homePage.isDisplayed(), "Home page should show the logged-in nav after a valid login.");
     }
 
-    @Test(groups = {"smoke", "web"})
+    @Test(groups = {"smoke", "web", "auth", "negative"})
     public void invalidLoginShowsErrorAndStaysOnLoginPage() {
         LoginData data = TestDataSurface.WEB.getCaseData("invalidLogin", LoginTestCase.class);
 
@@ -64,7 +64,8 @@ public class LoginTest extends BaseWebTest {
                 .clickLogin();
 
         assertTrue(loginPage.isErrorDisplayed(), "An error message should be displayed for a wrong password.");
-        assertTrue(loginPage.getErrorMessage().toLowerCase().contains("invalid"));
+        assertTrue(loginPage.getErrorMessage().toLowerCase().contains("invalid"),
+                "Error message should mention 'invalid' credentials, was: " + loginPage.getErrorMessage());
     }
 
 }

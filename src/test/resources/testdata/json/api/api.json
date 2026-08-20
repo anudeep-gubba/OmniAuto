@@ -15,7 +15,9 @@
     },
     "data": {
       "email": "${{EVENTHUB_EMAIL}}",
-      "password": "SomeOtherPassword1!"
+      "password": "SomeOtherPassword1!",
+      "expectedStatusCode": 400,
+      "expectedError": "Email already registered"
     }
   },
   "registerInvalidEmailFormat": {
@@ -25,7 +27,10 @@
     },
     "data": {
       "email": "not-an-email",
-      "password": "ValidPass123"
+      "password": "ValidPass123",
+      "expectedStatusCode": 400,
+      "expectedField": "email",
+      "expectedMessage": "A valid email is required"
     }
   },
   "registerShortPassword": {
@@ -34,7 +39,20 @@
       "testCaseName": "Registering with a password shorter than six characters is rejected"
     },
     "data": {
-      "password": "123"
+      "password": "123",
+      "expectedStatusCode": 400,
+      "expectedField": "password",
+      "expectedMessage": "Password must be at least 6 characters"
+    }
+  },
+  "registerEmptyBody": {
+    "metadata": {
+      "testCaseId": "TC-API-AUTH-011",
+      "testCaseName": "Registering with no body fields at all is rejected for both missing fields"
+    },
+    "data": {
+      "expectedStatusCode": 400,
+      "expectedError": "Validation failed"
     }
   },
   "loginExistingAccount": {
@@ -63,7 +81,9 @@
       "testCaseName": "Login with a never-registered email returns the same generic invalid-credentials error as a wrong password"
     },
     "data": {
-      "password": "WhateverPass1"
+      "password": "WhateverPass1",
+      "expectedStatusCode": 400,
+      "expectedError": "Invalid email or password"
     }
   },
   "loginMissingPasswordField": {
@@ -72,7 +92,8 @@
       "testCaseName": "Login request with the password field entirely missing is rejected"
     },
     "data": {
-      "email": "${{EVENTHUB_EMAIL}}"
+      "email": "${{EVENTHUB_EMAIL}}",
+      "expectedStatusCode": 400
     }
   },
   "meGarbageToken": {
@@ -93,6 +114,36 @@
       "password": "Framework@2026"
     }
   },
+  "meWithoutAuth": {
+    "metadata": {
+      "testCaseId": "TC-API-AUTH-012",
+      "testCaseName": "Fetching the current user with no Authorization header at all is rejected"
+    },
+    "data": {
+      "expectedStatusCode": 401,
+      "expectedError": "Unauthorized"
+    }
+  },
+  "healthCheck": {
+    "metadata": {
+      "testCaseId": "TC-API-SYSTEM-001",
+      "testCaseName": "Health check reports ok with a connected database"
+    },
+    "data": {
+      "expectedStatusCode": 200,
+      "expectedStatus": "ok",
+      "expectedDbStatus": "connected"
+    }
+  },
+  "systemConfig": {
+    "metadata": {
+      "testCaseId": "TC-API-SYSTEM-002",
+      "testCaseName": "Config endpoint returns the public feature flags"
+    },
+    "data": {
+      "expectedStatusCode": 200
+    }
+  },
 
   "defaultEvent": {
     "metadata": {
@@ -105,7 +156,8 @@
       "city": "Testville",
       "daysInFuture": 30,
       "price": 100.0,
-      "totalSeats": 50
+      "totalSeats": 50,
+      "expectedStatusCode": 201
     }
   },
   "fullFieldsEvent": {
@@ -121,7 +173,8 @@
       "daysInFuture": 45,
       "price": 250.5,
       "totalSeats": 300,
-      "imageUrl": "https://example.com/banner.jpg"
+      "imageUrl": "https://example.com/banner.jpg",
+      "expectedStatusCode": 201
     }
   },
   "negativePriceAndSeatsEvent": {
@@ -135,7 +188,8 @@
       "city": "City",
       "daysInFuture": 10,
       "price": -10.0,
-      "totalSeats": -5
+      "totalSeats": -5,
+      "expectedStatusCode": 400
     }
   },
   "pastDateEvent": {
@@ -149,7 +203,10 @@
       "city": "City",
       "eventDate": "2020-01-01T09:00:00.000Z",
       "price": 50.0,
-      "totalSeats": 10
+      "totalSeats": 10,
+      "expectedStatusCode": 400,
+      "expectedField": "eventDate",
+      "expectedMessage": "Event date must be in the future"
     }
   },
   "sportsCategoryEvent": {
@@ -163,7 +220,8 @@
       "city": "City",
       "daysInFuture": 10,
       "price": 20.0,
-      "totalSeats": 10
+      "totalSeats": 10,
+      "expectedStatusCode": 200
     }
   },
   "eventUpdate": {
@@ -177,7 +235,8 @@
       "city": "New City",
       "daysInFuture": 60,
       "price": 999.0,
-      "totalSeats": 75
+      "totalSeats": 75,
+      "expectedStatusCode": 200
     }
   },
   "invalidEventUpdate": {
@@ -191,7 +250,28 @@
       "city": "City",
       "daysInFuture": 10,
       "price": -1.0,
-      "totalSeats": 0
+      "totalSeats": 0,
+      "expectedStatusCode": 400
+    }
+  },
+  "unauthenticatedEventCreate": {
+    "metadata": {
+      "testCaseId": "TC-API-EVENT-007",
+      "testCaseName": "Creating an event without authentication is rejected"
+    },
+    "data": {
+      "expectedStatusCode": 401,
+      "expectedError": "Unauthorized"
+    }
+  },
+  "nonexistentEventLookup": {
+    "metadata": {
+      "testCaseId": "TC-API-EVENT-008",
+      "testCaseName": "Looking up a non-existent event id returns not found with an explanatory message"
+    },
+    "data": {
+      "expectedStatusCode": 404,
+      "expectedError": "Event with id 999999 not found"
     }
   },
 
@@ -214,7 +294,9 @@
       "customerName": "Framework Tester",
       "customerEmail": "not-an-email",
       "customerPhone": "+91-9876500000",
-      "quantity": 1
+      "quantity": 1,
+      "expectedStatusCode": 400,
+      "expectedField": "customerEmail"
     }
   },
   "tooShortCustomerPhone": {
@@ -226,7 +308,9 @@
       "customerName": "Framework Tester",
       "customerEmail": "tester@example.com",
       "customerPhone": "123",
-      "quantity": 1
+      "quantity": 1,
+      "expectedStatusCode": 400,
+      "expectedField": "customerPhone"
     }
   },
   "standardBookingScenario": {
@@ -236,7 +320,9 @@
     },
     "data": {
       "totalSeats": 10,
-      "quantity": 3
+      "quantity": 3,
+      "expectedStatusCode": 201,
+      "expectedBookingStatus": "confirmed"
     }
   },
   "exactRemainingSeatsScenario": {
@@ -246,7 +332,8 @@
     },
     "data": {
       "totalSeats": 2,
-      "quantity": 2
+      "quantity": 2,
+      "expectedStatusCode": 201
     }
   },
   "overbookingScenario": {
@@ -256,7 +343,8 @@
     },
     "data": {
       "totalSeats": 2,
-      "quantity": 3
+      "quantity": 3,
+      "expectedStatusCode": 400
     }
   },
   "zeroQuantityScenario": {
@@ -266,7 +354,9 @@
     },
     "data": {
       "totalSeats": 5,
-      "quantity": 0
+      "quantity": 0,
+      "expectedStatusCode": 400,
+      "expectedField": "quantity"
     }
   },
   "aboveMaxQuantityScenario": {
@@ -276,7 +366,9 @@
     },
     "data": {
       "totalSeats": 20,
-      "quantity": 11
+      "quantity": 11,
+      "expectedStatusCode": 400,
+      "expectedMessage": "Quantity must be an integer between 1 and 10"
     }
   },
   "nonexistentBookingReference": {
@@ -285,7 +377,8 @@
       "testCaseName": "Looking up a booking by a well-formed but never-issued reference returns not found"
     },
     "data": {
-      "bookingReference": "EVT-NOPE99"
+      "bookingReference": "EVT-NOPE99",
+      "expectedStatusCode": 404
     }
   },
   "pageableListingScenario": {
@@ -295,7 +388,38 @@
     },
     "data": {
       "page": 1,
-      "limit": 3
+      "limit": 3,
+      "expectedStatusCode": 200
+    }
+  },
+  "nonexistentEventBooking": {
+    "metadata": {
+      "testCaseId": "TC-API-BOOKING-010",
+      "testCaseName": "Booking against a non-existent event id returns not found"
+    },
+    "data": {
+      "expectedStatusCode": 404,
+      "expectedError": "Event with id 999999 not found"
+    }
+  },
+  "nonexistentBookingLookup": {
+    "metadata": {
+      "testCaseId": "TC-API-BOOKING-011",
+      "testCaseName": "Looking up a non-existent booking id returns not found"
+    },
+    "data": {
+      "expectedStatusCode": 404,
+      "expectedError": "Booking with id 999999 not found"
+    }
+  },
+  "bookingCancellation": {
+    "metadata": {
+      "testCaseId": "TC-API-BOOKING-012",
+      "testCaseName": "Cancelling a booking restores the seat and confirms with a message"
+    },
+    "data": {
+      "expectedStatusCode": 200,
+      "expectedMessage": "Booking cancelled"
     }
   },
 
@@ -319,7 +443,8 @@
       "city": "Testville",
       "daysInFuture": 30,
       "price": 100.0,
-      "totalSeats": 10
+      "totalSeats": 10,
+      "expectedStatusCode": 201
     }
   },
   "e2eFullLifecycleEventUpdate": {
@@ -333,7 +458,8 @@
       "city": "Updated City",
       "daysInFuture": 30,
       "price": 150.0,
-      "totalSeats": 10
+      "totalSeats": 10,
+      "expectedStatusCode": 200
     }
   },
   "e2eFullLifecycleBooking": {
@@ -344,7 +470,9 @@
     "data": {
       "customerName": "E2E Tester",
       "customerPhone": "+91-9876500000",
-      "quantity": 4
+      "quantity": 4,
+      "expectedStatusCode": 201,
+      "expectedBookingStatus": "confirmed"
     }
   },
   "e2eContextChainingEvent": {
@@ -358,7 +486,8 @@
       "city": "Testville",
       "daysInFuture": 30,
       "price": 100.0,
-      "totalSeats": 50
+      "totalSeats": 50,
+      "expectedStatusCode": 201
     }
   },
   "e2eContextChainingBooking": {
@@ -369,7 +498,8 @@
     "data": {
       "customerName": "Context Tester",
       "customerPhone": "+91-9876500001",
-      "quantity": 1
+      "quantity": 1,
+      "expectedStatusCode": 201
     }
   },
   "e2eSequentialBookingsEvent": {

@@ -12,8 +12,8 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertEquals;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Phase 5 validation for the Component Object Model (requirement.md &sect;7):
@@ -37,17 +37,17 @@ public class EventsTest extends BaseWebTest {
         eventsPage = new EventsPage();
     }
 
-    @Test(groups = "web")
+    @Test(groups = {"web", "events", "positive"})
     public void eventsListingShowsAtLeastOneEvent() {
         List<EventCardComponent> cards = eventsPage.getEventCards();
         assertTrue(cards.size() > 0, "Events page should list at least one event.");
 
         EventCardComponent first = cards.get(0);
-        assertTrue(!first.getName().isBlank());
+        assertTrue(!first.getName().isBlank(), "First event card should display a non-blank name.");
         assertTrue(first.getPrice().startsWith("$"), "Price should be displayed as a dollar amount.");
     }
 
-    @Test(groups = "web")
+    @Test(groups = {"web", "events", "positive"})
     public void eachEventCardIsIndependentlyScoped() {
         // Proves BaseComponent's root-scoping: reading N cards' names never returns
         // the same element twice or bleeds one card's data into another's.
@@ -59,10 +59,10 @@ public class EventsTest extends BaseWebTest {
                 "Every event card should report its own distinct name.");
     }
 
-    @Test(groups = "web")
+    @Test(groups = {"web", "events", "positive"})
     public void bookNowNavigatesToTheEventDetailPage() {
         List<EventCardComponent> cards = eventsPage.getEventCards();
-        assertTrue(cards.size() > 0);
+        assertTrue(cards.size() > 0, "Events page should list at least one event to click Book Now on.");
 
         cards.get(0).clickBookNow();
 
@@ -74,9 +74,10 @@ public class EventsTest extends BaseWebTest {
                 "Book Now should navigate to an event detail page, was: " + WebUtils.getCurrentUrl());
     }
 
-    @Test(groups = "web")
+    @Test(groups = {"web", "events", "positive"})
     public void headerShowsLoggedInUserAcrossPages() {
-        assertTrue(eventsPage.header().isLoggedIn());
-        assertEquals(eventsPage.header().getLoggedInUserEmail(), SecretManager.get("EVENTHUB_EMAIL"));
+        assertTrue(eventsPage.header().isLoggedIn(), "Header should show a logged-in state on the events page.");
+        assertEquals(eventsPage.header().getLoggedInUserEmail(), SecretManager.get("EVENTHUB_EMAIL"),
+                "Header should display the email of the account that's logged in.");
     }
 }

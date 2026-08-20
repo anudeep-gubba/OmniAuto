@@ -49,22 +49,28 @@ import java.util.regex.Pattern;
  * determined attacker with a small guess-list (e.g. a 4-digit PIN) hashing candidates to
  * find a match.</p>
  *
- * <p><b>Local-only escape hatch:</b> {@code -Dmasking.enabled=false} disables masking
- * entirely (returns input unchanged) &mdash; for a developer debugging locally, where the
- * real secret already sits in their own {@code .secret.env}, masking protects nobody.
- * Hard-blocked whenever a CI environment is detected ({@code CI}/{@code GITHUB_ACTIONS}
- * environment variables, set automatically by GitHub Actions and most other CI providers):
- * the flag is silently ignored in that case, masking always stays on, so this can never
- * leak into a shared/CI report regardless of how the build was invoked. Logs a one-time
- * warning to stderr (not through SLF4J/Logback, deliberately &mdash; see
- * {@link #warnOnceIfSuppressed()}) whenever it actually takes effect, so disabled masking is
- * never silent.</p>
+ * <p><b>Off by default, opt in explicitly.</b> A local run masks nothing unless masking is
+ * turned on for that run, via either {@code -Dmasking.enabled=true} (system property, e.g. in
+ * a Maven command) or a {@code MASKING_ENABLED=true} environment variable &mdash; the property
+ * wins if both are set. The common local-dev case (a developer's own {@code .secret.env}
+ * already has the real value, and reading it straight out of the console/report while
+ * debugging is the point) is the default; masking is something you turn <em>on</em> for a run
+ * you intend to share, not something you turn off for one you don't.</p>
+ *
+ * <p><b>Hard-forced on in CI, regardless of the flag above:</b> whenever a CI environment is
+ * detected ({@code CI}/{@code GITHUB_ACTIONS} environment variables, set automatically by
+ * GitHub Actions and most other CI providers), masking is always on &mdash; the run cannot
+ * opt out of it, deliberately, so a shared CI report/artifact can never go out unmasked no
+ * matter how the build was invoked. Logs a one-time notice to stderr (not through SLF4J/
+ * Logback, deliberately &mdash; see {@link #noteMaskingStatusOnce()}) the first time a local
+ * run resolves as unmasked, so the default is never silent either.</p>
  */
 public final class SensitiveDataMasker {
 
     public static final String MASK = "********";
 
     private static final String MASKING_ENABLED_PROPERTY = "masking.enabled";
+    private static final String MASKING_ENABLED_ENV_VAR = "MASKING_ENABLED";
 
     private static final String KEY_NAME_ALTERNATION = String.join("|",
             "password", "pwd", "secret", "token", "authorization", "auth",
@@ -99,7 +105,7 @@ public final class SensitiveDataMasker {
         if (input == null || input.isEmpty()) {
             return input;
         }
-        if (isMaskingSuppressed()) {
+        if (!isMaskingEnabled()) {
             return input;
         }
         String result = input;
@@ -153,18 +159,22 @@ public final class SensitiveDataMasker {
     }
 
     /**
-     * {@code true} only for a deliberate local {@code -Dmasking.enabled=false}, and never when
-     * a CI environment is detected, regardless of that flag - see the class javadoc.
+     * {@code true} whenever a CI environment is detected (masking cannot be turned off there,
+     * regardless of the flag), or when this run explicitly opted in via
+     * {@code -Dmasking.enabled=true} (checked first) or {@code MASKING_ENABLED=true} (checked
+     * only if the system property is unset) - {@code false} otherwise, which is the default for
+     * an ordinary local run. See the class javadoc for the off-by-default rationale.
      */
-    private static boolean isMaskingSuppressed() {
+    private static boolean isMaskingEnabled() {
         if (System.getenv("CI") != null || System.getenv("GITHUB_ACTIONS") != null) {
-            return false;
+            return true;
         }
-        boolean suppressed = "false".equalsIgnoreCase(System.getProperty(MASKING_ENABLED_PROPERTY, "true"));
-        if (suppressed) {
-            warnOnceIfSuppressed();
+        String flag = System.getProperty(MASKING_ENABLED_PROPERTY, System.getenv(MASKING_ENABLED_ENV_VAR));
+        boolean enabled = "true".equalsIgnoreCase(flag);
+        if (!enabled) {
+            noteMaskingStatusOnce();
         }
-        return suppressed;
+        return enabled;
     }
 
     /**
@@ -174,11 +184,12 @@ public final class SensitiveDataMasker {
      * event), before assuming anything about Logback's own configuration state is safe. A raw
      * {@code System.err} write has no such dependency.
      */
-    private static void warnOnceIfSuppressed() {
+    private static void noteMaskingStatusOnce() {
         if (SUPPRESSION_WARNED.compareAndSet(false, true)) {
-            System.err.println("[SensitiveDataMasker] Masking is DISABLED (-D" + MASKING_ENABLED_PROPERTY
-                    + "=false): real secret values will appear in logs/reports for this run. "
-                    + "Local debugging only - never valid in CI, and this flag is ignored there automatically.");
+            System.err.println("[SensitiveDataMasker] Masking is OFF (default): real secret values will appear "
+                    + "in logs/reports for this run. Turn it on with -D" + MASKING_ENABLED_PROPERTY
+                    + "=true or " + MASKING_ENABLED_ENV_VAR + "=true before sharing a report - "
+                    + "CI always masks regardless of this flag.");
         }
     }
 }

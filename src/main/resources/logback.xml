@@ -50,16 +50,20 @@
          logs into Extent's own model, not text output. -->
     <appender name="EXTENT" class="com.framework.reporting.ExtentLoggingAppender"/>
 
+    <!-- Mirrors the same business-narrative log events into Allure as steps, when Allure is
+         enabled (com.framework.reporting.AllureLoggingAppender's own javadoc has the full
+         rationale) - closes the "Allure has no bridge for arbitrary log lines" gap this
+         README used to document as a known limitation. -->
+    <appender name="ALLURE_STEPS" class="com.framework.reporting.AllureLoggingAppender"/>
+
     <!-- Framework/test code: DEBUG is the point of "detailed action-level logging" - see
          com.framework.web.WebActions, com.framework.mobile.MobileActions, com.framework.api.ApiClient.
-         Not attached to EXTENT here - only the curated business-narrative loggers below are,
-         so the report reads as "what the test did" (one line per real action, in plain
-         language, already carrying its own value) rather than duplicating every low-level
-         element/HTTP interaction underneath it. All of it still reaches CONSOLE/FILE via the
-         root logger below (Logback loggers propagate to their ancestors' appenders by
-         default), and the API layer's full masked request/response detail lives in Allure's
-         own per-call step instead (see ApiClient#execute) - nothing is lost, just not
-         duplicated into Extent too.
+         Not attached to EXTENT here (except com.framework.api below) - only the curated
+         business-narrative loggers below are, so the report reads as "what the test did" (one
+         line per real action, in plain language, already carrying its own value) rather than
+         duplicating every low-level Selenium/Appium interaction underneath it. All of it still
+         reaches CONSOLE/FILE via the root logger below (Logback loggers propagate to their
+         ancestors' appenders by default).
          Found in practice: SecretManager/ConfigManager's own one-time startup log lines are
          ordinary com.framework logging too, so before this split they landed inside whichever
          test happened to be the first to touch either class - misattributed, not that test's
@@ -68,23 +72,50 @@
     <logger name="com.framework" level="DEBUG"/>
     <logger name="com.tests" level="DEBUG"/>
 
+    <!-- com.framework.api (ApiClient) does NOT get an EXTENT appender-ref here, unlike the
+         com.tests.application.* loggers below - not because it has nothing worth showing (it's
+         the opposite: unlike Web/Mobile, an API test has no richer narrative layer underneath it
+         to fall back on), but because a generic text mirror cannot render it usefully: Extent's
+         Spark theme places a log message inside a plain HTML <td> with no `white-space: pre`
+         anywhere in its bundled CSS (verified live - grepped the generated report's own <style>
+         block), so even an already pretty-printed, multi-line JSON body still renders as one
+         squished, whitespace-collapsed line in an actual browser regardless of how it looks in
+         the raw HTML source or in a console. ApiClient calls ExtentManager.logCodeBlock(...)
+         directly instead, which renders into a <textarea readonly> - whitespace-preserving by
+         native HTML semantics, no CSS/JS dependency required - see that method's own javadoc for
+         why the seemingly-more-correct MarkupHelper.createCodeBlock(json, CodeLanguage.JSON)
+         overload was rejected instead (verified live: silently broken in this project's
+         self-contained Spark HTML, not assumed). This mirrors ScreenshotCaptureListener's own
+         precedent - reach into Extent explicitly for content the generic Logback bridge can't
+         represent well, rather than stretching that bridge to cover it. -->
+
     <!-- The business-narrative layer, per surface - Web/Mobile Page Objects and Components
-         (com.tests.pages.*/com.tests.components.*, split by platform underneath), API Services
-         (com.tests.api.services - application-specific, same as page objects/components, so it
-         lives in src/test rather than com.framework; the business-level wrapper around
-         com.framework.api.ApiClient, requirement.md section 9/10's "userService.createUser(request)"
-         layer). Each of these already logs one line per real action in plain language; that is
-         the entire report, deliberately. Logged at their common parent package rather than one
-         logger per web/mobile leaf - logback's hierarchy already covers
-         com.tests.pages.web/com.tests.pages.mobile from com.tests.pages. -->
-    <logger name="com.tests.pages" level="DEBUG">
+         (com.tests.application.pages.*/com.tests.application.components.*, split by platform
+         underneath), API Services (com.tests.application.services - application-specific, same
+         as page objects/components, so it lives in src/test rather than com.framework; the
+         business-level wrapper around com.framework.api.ApiClient, requirement.md section
+         9/10's "userService.createUser(request)" layer). Each of these already logs one line
+         per real action in plain language. Logged at their common parent package rather than
+         one logger per web/mobile leaf - logback's hierarchy already covers
+         com.tests.application.pages.web/com.tests.application.pages.mobile from
+         com.tests.application.pages.
+         Audit finding: these three logger names still read com.tests.pages/com.tests.components/
+         com.tests.api.services from before the tests/application restructure - none of them
+         matched any real package any more (the real ones all moved under
+         com.tests.application.*), so none of this framework's own business-narrative logging
+         had reached Extent since that restructure; only the bare test pass/fail node existed
+         with nothing underneath it. Fixed by pointing these at where the code actually lives. -->
+    <logger name="com.tests.application.pages" level="DEBUG">
         <appender-ref ref="EXTENT"/>
+        <appender-ref ref="ALLURE_STEPS"/>
     </logger>
-    <logger name="com.tests.components" level="DEBUG">
+    <logger name="com.tests.application.components" level="DEBUG">
         <appender-ref ref="EXTENT"/>
+        <appender-ref ref="ALLURE_STEPS"/>
     </logger>
-    <logger name="com.tests.api.services" level="DEBUG">
+    <logger name="com.tests.application.services" level="DEBUG">
         <appender-ref ref="EXTENT"/>
+        <appender-ref ref="ALLURE_STEPS"/>
     </logger>
 
     <!-- Third-party libraries: their default verbosity is connection/protocol-level noise

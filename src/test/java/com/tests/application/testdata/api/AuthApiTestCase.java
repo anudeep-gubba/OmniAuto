@@ -28,7 +28,22 @@ public record AuthApiTestCase(TestCaseMetadata metadata, AuthApiData data) imple
      * every field (e.g. a case whose email must be freshly randomized per run leaves
      * {@code email} unset here and generates it in Java instead) - the unused ones are simply
      * absent from that row's JSON and resolve to {@code null}.
+     *
+     * <p>{@code expectedStatusCode}/{@code expectedError}/{@code expectedField}/
+     * {@code expectedMessage} are the response-shape assertions each case expects, same
+     * reasoning as {@link BookingApiTestCase.BookingApiData}. Not used by every case: a case
+     * exercised only via {@code expectThrows} against a framework-level exception message
+     * (e.g. {@code loginWrongPassword}) leaves these unset, since that message is
+     * {@code ApiAuthenticationException}'s own generic prefix, not something the server
+     * returned.</p>
      */
-    public record AuthApiData(String email, String password, String token) {
+    public record AuthApiData(
+            String email,
+            String password,
+            String token,
+            Integer expectedStatusCode,
+            String expectedError,
+            String expectedField,
+            String expectedMessage) {
     }
 }

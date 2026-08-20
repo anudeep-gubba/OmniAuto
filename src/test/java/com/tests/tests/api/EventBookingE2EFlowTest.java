@@ -22,8 +22,8 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertEquals;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Multi-step, cross-resource flows against eventhub's live, persisted API - each one chains a
@@ -42,18 +42,27 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
     private final EventService eventService = new EventService();
     private final BookingService bookingService = new BookingService();
 
-    private Integer createdBookingId;
-    private Integer createdEventId;
+    // ThreadLocal, not a plain field (audit finding, verified live with -Dparallel=methods
+    // -DthreadCount=8): TestNG runs every @Test method of a class on one shared instance under
+    // method-level parallelism, not one instance per thread/method - a plain field here let one
+    // thread's write clobber another's before it read the value back (e.g. this exact class:
+    // fullEventLifecycle...'s own createdBookingId was overwritten mid-method by
+    // seatCountStaysCorrect... running concurrently on the same instance, so the "look it back
+    // up by ID" step compared against the wrong booking). Same reasoning as
+    // com.framework.api.ApiContext/ConfigManager's own thread-local tiers - ApiContext itself
+    // was already safe; these two plain fields were the gap.
+    private final ThreadLocal<Integer> createdBookingId = new ThreadLocal<>();
+    private final ThreadLocal<Integer> createdEventId = new ThreadLocal<>();
 
     @Override
     protected void tearDownTestData() {
-        if (createdBookingId != null) {
-            bookingService.cancelBooking(createdBookingId);
-            createdBookingId = null;
+        if (createdBookingId.get() != null) {
+            bookingService.cancelBooking(createdBookingId.get());
+            createdBookingId.remove();
         }
-        if (createdEventId != null) {
-            eventService.deleteEvent(createdEventId);
-            createdEventId = null;
+        if (createdEventId.get() != null) {
+            eventService.deleteEvent(createdEventId.get());
+            createdEventId.remove();
         }
         ApiContext.clear();
     }
@@ -73,7 +82,7 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
      * reference -&gt; list bookings scoped to the event -&gt; cancel the booking and confirm the seat
      * is restored and the booking itself is gone -&gt; delete the event and confirm it is gone too.
      */
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "e2e", "events", "bookings"})
     public void fullEventLifecycleFromRegistrationThroughBookingToDeletionWorksEndToEnd() {
         // 1. Register a brand-new, fully isolated account.
         AuthApiData registration = TestDataSurface.API.getCaseData("e2eFullLifecycleRegistration", AuthApiTestCase.class);
@@ -85,9 +94,9 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
         String uniqueTitle = "E2E Flow Event " + RandomDataUtils.uniqueId();
         CreateEventRequest eventRequest = toEventRequest(uniqueTitle, eventData);
         ApiResponse createEventResponse = eventService.createEvent(eventRequest);
-        createEventResponse.assertStatusCode(201);
+        createEventResponse.assertStatusCode(eventData.expectedStatusCode());
         int eventId = createEventResponse.jsonPath().getInt("data.id");
-        createdEventId = eventId;
+        createdEventId.set(eventId);
 
         // 3. Confirm it surfaces both by direct GET and through a filtered search - two
         // independent read paths onto the same just-created resource.
@@ -99,7 +108,7 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
         // 4. Update it, and confirm the change is durable (a fresh GET, not just the PUT's own echo).
         EventPayloadData updateData = TestDataSurface.API.getCaseData("e2eFullLifecycleEventUpdate", EventPayloadTestCase.class);
         CreateEventRequest updateRequest = toEventRequest(uniqueTitle, updateData);
-        eventService.updateEvent(eventId, updateRequest).assertStatusCode(200);
+        eventService.updateEvent(eventId, updateRequest).assertStatusCode(updateData.expectedStatusCode());
         assertEquals(eventService.getEvent(eventId).jsonPath().getString("data.venue"), updateData.venue());
 
         // 5. Book tickets, chaining the event ID extracted in step 2 straight into the request.
@@ -107,11 +116,11 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
         CreateBookingRequest bookingRequest = new CreateBookingRequest(
                 eventId, bookingData.customerName(), RandomDataUtils.uniqueEmail("e2e.customer"), bookingData.customerPhone(), bookingData.quantity());
         ApiResponse createBookingResponse = bookingService.createBooking(bookingRequest);
-        createBookingResponse.assertStatusCode(201);
+        createBookingResponse.assertStatusCode(bookingData.expectedStatusCode());
         BookingResponse booking = createBookingResponse.extract("data", BookingResponse.class);
-        createdBookingId = booking.id();
-        assertEquals(booking.eventId(), eventId);
-        assertEquals(booking.status(), "confirmed");
+        createdBookingId.set(booking.id());
+        assertEquals(booking.eventId(), eventId, "Booking should reference the event it was made against.");
+        assertEquals(booking.status(), bookingData.expectedBookingStatus(), "A freshly created booking should be confirmed.");
 
         // 6. Confirm the atomic seat decrement - the booking response's own nested "event" is a
         // stale pre-transaction snapshot (verified live), so a fresh GET is required.
@@ -122,26 +131,26 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
 
         // 7. Look the booking back up two more ways: by ID, and by its server-generated reference
         // code (itself only known because step 5's response was extracted, not assumed).
-        BookingResponse byId = bookingService.getBooking(createdBookingId).extract("data", BookingResponse.class);
-        assertEquals(byId.bookingRef(), booking.bookingRef());
+        BookingResponse byId = bookingService.getBooking(createdBookingId.get()).extract("data", BookingResponse.class);
+        assertEquals(byId.bookingRef(), booking.bookingRef(), "Booking fetched by id should carry the same reference code it was created with.");
         BookingResponse byRef = bookingService.getBookingByReference(booking.bookingRef()).extract("data", BookingResponse.class);
-        assertEquals(byRef.id(), createdBookingId.intValue());
+        assertEquals(byRef.id(), createdBookingId.get(), "Booking fetched by reference should resolve back to the same booking id.");
 
         // 8. Confirm the booking shows up filtered by its event.
         List<Integer> bookingIdsForEvent = bookingService.listBookingsForEvent(eventId).jsonPath().getList("data.id", Integer.class);
-        assertTrue(bookingIdsForEvent.contains(createdBookingId), "Event-scoped booking list should include it: " + bookingIdsForEvent);
+        assertTrue(bookingIdsForEvent.contains(createdBookingId.get()), "Event-scoped booking list should include it: " + bookingIdsForEvent);
 
         // 9. Cancel it, and confirm both the seat restoration and that the booking itself is gone.
-        bookingService.cancelBooking(createdBookingId).assertStatusCode(200);
+        bookingService.cancelBooking(createdBookingId.get()).assertStatusCode(200);
         assertEquals(eventService.getEvent(eventId).jsonPath().getInt("data.availableSeats"), eventData.totalSeats(),
                 "Cancelling should restore all " + bookingData.quantity() + " seats.");
-        bookingService.getBooking(createdBookingId).assertStatusCode(404);
-        createdBookingId = null; // already gone - nothing left for cleanup() to cancel.
+        bookingService.getBooking(createdBookingId.get()).assertStatusCode(404);
+        createdBookingId.remove(); // already gone - nothing left for cleanup() to cancel.
 
         // 10. Delete the event, and confirm it is gone too.
         eventService.deleteEvent(eventId).assertStatusCode(200);
         eventService.getEvent(eventId).assertStatusCode(404);
-        createdEventId = null; // already gone - nothing left for cleanup() to delete.
+        createdEventId.remove(); // already gone - nothing left for cleanup() to delete.
     }
 
     /**
@@ -151,7 +160,7 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
      * under {@link ApiContext#ACCESS_TOKEN_KEY}) and an arbitrary chained value (a booked
      * event's ID) coexist correctly in the same runtime-variable store across a multi-call flow.
      */
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "e2e", "events", "bookings"})
     public void eventIdChainsThroughApiContextIntoTheBookingCall() {
         loginWithSeededAccount();
         assertTrue(ApiContext.has(ApiContext.ACCESS_TOKEN_KEY), "Login should have populated the ApiContext access token.");
@@ -159,10 +168,10 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
         EventPayloadData eventData = TestDataSurface.API.getCaseData("e2eContextChainingEvent", EventPayloadTestCase.class);
         CreateEventRequest eventRequest = toEventRequest("ApiContext Chaining Event " + RandomDataUtils.uniqueId(), eventData);
         ApiResponse createEventResponse = eventService.createEvent(eventRequest);
-        createEventResponse.assertStatusCode(201);
+        createEventResponse.assertStatusCode(eventData.expectedStatusCode());
 
         int eventId = createEventResponse.jsonPath().getInt("data.id");
-        createdEventId = eventId;
+        createdEventId.set(eventId);
         ApiContext.set("eventId", String.valueOf(eventId));
 
         BookingApiData bookingData = TestDataSurface.API.getCaseData("e2eContextChainingBooking", BookingApiTestCase.class);
@@ -170,10 +179,10 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
                 Integer.parseInt(ApiContext.get("eventId")), bookingData.customerName(), RandomDataUtils.uniqueEmail("context.tester"),
                 bookingData.customerPhone(), bookingData.quantity());
         ApiResponse createBookingResponse = bookingService.createBooking(bookingRequest);
-        createBookingResponse.assertStatusCode(201);
+        createBookingResponse.assertStatusCode(bookingData.expectedStatusCode());
 
         BookingResponse booking = createBookingResponse.extract("data", BookingResponse.class);
-        createdBookingId = booking.id();
+        createdBookingId.set(booking.id());
         assertEquals(String.valueOf(booking.eventId()), ApiContext.get("eventId"),
                 "Booking should reference the event ID chained through ApiContext.");
     }
@@ -183,14 +192,14 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
      * seat count accumulates/releases correctly across a chain of calls, not just a single
      * booking-then-cancel pair.
      */
-    @Test(groups = "api")
+    @Test(groups = {"api", "e2e", "events", "bookings"})
     public void seatCountStaysCorrectAcrossMultipleSequentialBookingsAndACancellation() {
         loginWithSeededAccount();
 
         EventPayloadData eventData = TestDataSurface.API.getCaseData("e2eSequentialBookingsEvent", EventPayloadTestCase.class);
         CreateEventRequest eventRequest = toEventRequest("Multi Booking Event " + RandomDataUtils.uniqueId(), eventData);
         int eventId = eventService.createEvent(eventRequest).jsonPath().getInt("data.id");
-        createdEventId = eventId;
+        createdEventId.set(eventId);
 
         BookingApiData firstBookingData = TestDataSurface.API.getCaseData("e2eSequentialBookingOne", BookingApiTestCase.class);
         int firstBookingId = bookingService.createBooking(
@@ -212,21 +221,21 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
         assertEquals(eventService.getEvent(eventId).jsonPath().getInt("data.availableSeats"), afterSecondBooking + firstBookingData.quantity(),
                 "Cancelling the " + firstBookingData.quantity() + "-seat booking should restore just those " + firstBookingData.quantity() + ".");
 
-        createdBookingId = secondBookingId; // the only one still standing - cleanup() cancels it.
+        createdBookingId.set(secondBookingId); // the only one still standing - cleanup() cancels it.
     }
 
     /**
      * Deleting an event cascades to its bookings (per the API's own documented behavior) - a
      * booking made through it becomes unreachable afterward rather than orphaned.
      */
-    @Test(groups = "api")
+    @Test(groups = {"api", "e2e", "events", "bookings"})
     public void deletingAnEventCascadesToItsBookings() {
         loginWithSeededAccount();
 
         EventPayloadData eventData = TestDataSurface.API.getCaseData("e2eCascadeDeleteEvent", EventPayloadTestCase.class);
         CreateEventRequest eventRequest = toEventRequest("Cascade Delete Event " + RandomDataUtils.uniqueId(), eventData);
         int eventId = eventService.createEvent(eventRequest).jsonPath().getInt("data.id");
-        createdEventId = eventId;
+        createdEventId.set(eventId);
 
         BookingApiData bookingData = TestDataSurface.API.getCaseData("e2eCascadeDeleteBooking", BookingApiTestCase.class);
         int bookingId = bookingService.createBooking(
@@ -234,7 +243,7 @@ public class EventBookingE2EFlowTest extends BaseApiTest {
                 .jsonPath().getInt("data.id");
 
         eventService.deleteEvent(eventId).assertStatusCode(200);
-        createdEventId = null; // already gone.
+        createdEventId.remove(); // already gone.
 
         bookingService.getBooking(bookingId).assertStatusCode(404);
         // Nothing left for cleanup() to cancel - the cascade already removed it.

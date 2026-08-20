@@ -27,6 +27,14 @@ public record EventPayloadTestCase(TestCaseMetadata metadata, EventPayloadData d
      * {@code eventDate} is only set on rows that instead need a fixed, literal (often past)
      * date, e.g. to trigger the "must be in the future" validation error - the two are mutually
      * exclusive per row.</p>
+     *
+     * <p>{@code expectedStatusCode}/{@code expectedError}/{@code expectedField}/
+     * {@code expectedMessage} are the response-shape assertions each case expects - moved out of
+     * {@link EventApiTest}/{@link EventBookingE2EFlowTest} and into data so an API contract
+     * change is a JSON edit, not a Java one, same reasoning as {@link BookingApiTestCase.BookingApiData}.
+     * A handful of rows (e.g. a bare "unauthenticated create returns 401" case) use only these
+     * fields, leaving the event-payload fields above null - same sparse-row convention every
+     * other {@code *TestCase} here already follows.</p>
      */
     public record EventPayloadData(
             String eventDescription,
@@ -37,6 +45,10 @@ public record EventPayloadTestCase(TestCaseMetadata metadata, EventPayloadData d
             String eventDate,
             double price,
             int totalSeats,
-            String imageUrl) {
+            String imageUrl,
+            Integer expectedStatusCode,
+            String expectedError,
+            String expectedField,
+            String expectedMessage) {
     }
 }
