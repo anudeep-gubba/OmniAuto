@@ -1,0 +1,333 @@
+registerNewUser:
+  metadata:
+    testCaseId: TC-API-AUTH-001
+    testCaseName: New user registers successfully and receives a usable auth token
+  data:
+    password: Framework@2026
+registerDuplicateEmail:
+  metadata:
+    testCaseId: TC-API-AUTH-002
+    testCaseName: Registering with an already-registered email is rejected
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+    password: SomeOtherPassword1!
+registerInvalidEmailFormat:
+  metadata:
+    testCaseId: TC-API-AUTH-003
+    testCaseName: Registering with a malformed email address is rejected
+  data:
+    email: not-an-email
+    password: ValidPass123
+registerShortPassword:
+  metadata:
+    testCaseId: TC-API-AUTH-004
+    testCaseName: Registering with a password shorter than six characters is rejected
+  data:
+    password: 123
+loginExistingAccount:
+  metadata:
+    testCaseId: TC-API-AUTH-005
+    testCaseName: Existing account logs in successfully with valid credentials
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+    password: "${{EVENTHUB_PASSWORD}}"
+loginWrongPassword:
+  metadata:
+    testCaseId: TC-API-AUTH-006
+    testCaseName: Login is rejected when the password is incorrect
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+    password: DefinitelyWrongPassword1!
+loginNonexistentEmail:
+  metadata:
+    testCaseId: TC-API-AUTH-007
+    testCaseName: Login with a never-registered email returns the same generic invalid-credentials
+      error as a wrong password
+  data:
+    password: WhateverPass1
+loginMissingPasswordField:
+  metadata:
+    testCaseId: TC-API-AUTH-008
+    testCaseName: Login request with the password field entirely missing is rejected
+  data:
+    email: "${{EVENTHUB_EMAIL}}"
+meGarbageToken:
+  metadata:
+    testCaseId: TC-API-AUTH-009
+    testCaseName: Fetching the current user with a syntactically-invalid bearer token
+      is rejected
+  data:
+    token: this.is.not-a-real-jwt
+secondAccountForEventIsolation:
+  metadata:
+    testCaseId: TC-API-AUTH-010
+    testCaseName: "A second, freshly-registered account used only to verify event\
+      \ ownership isolation"
+  data:
+    password: Framework@2026
+defaultEvent:
+  metadata:
+    testCaseId: TC-API-EVENT-000
+    testCaseName: Baseline event payload shared by cases that just need some existing
+      event
+  data:
+    category: Conference
+    venue: Test Venue
+    city: Testville
+    daysInFuture: 30
+    price: 100.0
+    totalSeats: 50
+fullFieldsEvent:
+  metadata:
+    testCaseId: TC-API-EVENT-001
+    testCaseName: Creating an event with every optional field populated persists all
+      of them exactly
+  data:
+    eventDescription: A full description.
+    category: Concert
+    venue: Grand Arena
+    city: Mumbai
+    daysInFuture: 45
+    price: 250.5
+    totalSeats: 300
+    imageUrl: https://example.com/banner.jpg
+negativePriceAndSeatsEvent:
+  metadata:
+    testCaseId: TC-API-EVENT-002
+    testCaseName: Creating an event with a negative price and a negative seat count
+      is rejected
+  data:
+    category: Conference
+    venue: Venue
+    city: City
+    daysInFuture: 10
+    price: -10.0
+    totalSeats: -5
+pastDateEvent:
+  metadata:
+    testCaseId: TC-API-EVENT-003
+    testCaseName: Creating an event dated in the past is rejected
+  data:
+    category: Conference
+    venue: Venue
+    city: City
+    eventDate: 2020-01-01T09:00:00.000Z
+    price: 50.0
+    totalSeats: 10
+sportsCategoryEvent:
+  metadata:
+    testCaseId: TC-API-EVENT-004
+    testCaseName: Events can be filtered by category and only matching events are
+      returned
+  data:
+    category: Sports
+    venue: Venue
+    city: City
+    daysInFuture: 10
+    price: 20.0
+    totalSeats: 10
+eventUpdate:
+  metadata:
+    testCaseId: TC-API-EVENT-005
+    testCaseName: "Updating an event's fields persists the change durably, confirmed\
+      \ by a fresh read"
+  data:
+    category: Festival
+    venue: New Venue
+    city: New City
+    daysInFuture: 60
+    price: 999.0
+    totalSeats: 75
+invalidEventUpdate:
+  metadata:
+    testCaseId: TC-API-EVENT-006
+    testCaseName: Updating an event with a negative price and zero seats is rejected
+  data:
+    category: Conference
+    venue: Venue
+    city: City
+    daysInFuture: 10
+    price: -1.0
+    totalSeats: 0
+defaultBooking:
+  metadata:
+    testCaseId: TC-API-BOOKING-000
+    testCaseName: Baseline customer details shared by cases that just need some valid
+      booking
+  data:
+    customerName: Framework Tester
+    customerPhone: +91-9876500000
+invalidCustomerEmail:
+  metadata:
+    testCaseId: TC-API-BOOKING-001
+    testCaseName: Booking with a malformed customer email is rejected
+  data:
+    customerName: Framework Tester
+    customerEmail: not-an-email
+    customerPhone: +91-9876500000
+    quantity: 1
+tooShortCustomerPhone:
+  metadata:
+    testCaseId: TC-API-BOOKING-002
+    testCaseName: Booking with a too-short customer phone number is rejected
+  data:
+    customerName: Framework Tester
+    customerEmail: tester@example.com
+    customerPhone: 123
+    quantity: 1
+standardBookingScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-003
+    testCaseName: Booking tickets decrements the available seat count and returns
+      a booking reference
+  data:
+    totalSeats: 10
+    quantity: 3
+exactRemainingSeatsScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-004
+    testCaseName: Booking exactly the remaining seats succeeds and leaves zero seats
+      available
+  data:
+    totalSeats: 2
+    quantity: 2
+overbookingScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-005
+    testCaseName: Booking more tickets than are available is rejected
+  data:
+    totalSeats: 2
+    quantity: 3
+zeroQuantityScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-006
+    testCaseName: Booking a quantity of zero is rejected
+  data:
+    totalSeats: 5
+    quantity: 0
+aboveMaxQuantityScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-007
+    testCaseName: Booking a quantity above the documented maximum of ten is rejected
+  data:
+    totalSeats: 20
+    quantity: 11
+nonexistentBookingReference:
+  metadata:
+    testCaseId: TC-API-BOOKING-008
+    testCaseName: Looking up a booking by a well-formed but never-issued reference
+      returns not found
+  data:
+    bookingReference: EVT-NOPE99
+pageableListingScenario:
+  metadata:
+    testCaseId: TC-API-BOOKING-009
+    testCaseName: Listing bookings respects the requested page and limit
+  data:
+    page: 1
+    limit: 3
+e2eFullLifecycleRegistration:
+  metadata:
+    testCaseId: TC-API-E2E-001
+    testCaseName: Account registration step of the full registration-through-deletion
+      journey
+  data:
+    password: Framework@2026
+e2eFullLifecycleEvent:
+  metadata:
+    testCaseId: TC-API-E2E-002
+    testCaseName: Event creation step of the full registration-through-deletion journey
+  data:
+    category: Conference
+    venue: Test Venue
+    city: Testville
+    daysInFuture: 30
+    price: 100.0
+    totalSeats: 10
+e2eFullLifecycleEventUpdate:
+  metadata:
+    testCaseId: TC-API-E2E-003
+    testCaseName: Event update step of the full registration-through-deletion journey
+  data:
+    category: Conference
+    venue: Updated Venue
+    city: Updated City
+    daysInFuture: 30
+    price: 150.0
+    totalSeats: 10
+e2eFullLifecycleBooking:
+  metadata:
+    testCaseId: TC-API-E2E-004
+    testCaseName: Ticket booking step of the full registration-through-deletion journey
+  data:
+    customerName: E2E Tester
+    customerPhone: +91-9876500000
+    quantity: 4
+e2eContextChainingEvent:
+  metadata:
+    testCaseId: TC-API-E2E-005
+    testCaseName: Event created for the ApiContext value-chaining journey
+  data:
+    category: Conference
+    venue: Test Venue
+    city: Testville
+    daysInFuture: 30
+    price: 100.0
+    totalSeats: 50
+e2eContextChainingBooking:
+  metadata:
+    testCaseId: TC-API-E2E-006
+    testCaseName: Booking made against the ApiContext-chained event ID
+  data:
+    customerName: Context Tester
+    customerPhone: +91-9876500001
+    quantity: 1
+e2eSequentialBookingsEvent:
+  metadata:
+    testCaseId: TC-API-E2E-007
+    testCaseName: "Event that three sequential bookings, interleaved with a cancellation,\
+      \ are made against"
+  data:
+    category: Conference
+    venue: Venue
+    city: City
+    daysInFuture: 30
+    price: 20.0
+    totalSeats: 10
+e2eSequentialBookingOne:
+  metadata:
+    testCaseId: TC-API-E2E-008
+    testCaseName: "First of two sequential bookings, later cancelled to prove seat\
+      \ restoration mid-chain"
+  data:
+    customerName: Buyer One
+    customerPhone: +91-9876500001
+    quantity: 3
+e2eSequentialBookingTwo:
+  metadata:
+    testCaseId: TC-API-E2E-009
+    testCaseName: "Second of two sequential bookings, left standing for cleanup to\
+      \ cancel"
+  data:
+    customerName: Buyer Two
+    customerPhone: +91-9876500002
+    quantity: 2
+e2eCascadeDeleteEvent:
+  metadata:
+    testCaseId: TC-API-E2E-010
+    testCaseName: Event whose deletion is expected to cascade-delete its own booking
+  data:
+    category: Conference
+    venue: Venue
+    city: City
+    daysInFuture: 30
+    price: 20.0
+    totalSeats: 5
+e2eCascadeDeleteBooking:
+  metadata:
+    testCaseId: TC-API-E2E-011
+    testCaseName: Booking expected to become unreachable once its event is deleted
+  data:
+    customerName: Cascade Buyer
+    customerPhone: +91-9876500003
+    quantity: 1

@@ -54,4 +54,28 @@ public final class AllureManager {
             LOGGER.warn("Failed to attach '{}' to Allure: {}", name, e.getMessage());
         }
     }
+
+    /**
+     * Surfaces a test-case-data row's {@code testCaseId}/{@code testCaseName} (see {@link
+     * com.framework.testdata.TestCaseMetadata}) as parameters on the currently-running Allure
+     * test result - shown in that test's own "Parameters" table, and filterable/sortable across
+     * a whole run, so a report reader can immediately see (or search for) which named test case
+     * a given result was driven by without opening the test data file.
+     *
+     * <p>Called once, centrally, from {@link com.framework.testdata.TestDataManager#getCaseData}
+     * - no test author ever adds this themselves (requirement.md &sect;18). Extent already gets
+     * the same information for free via the Logback-to-Extent bridge ({@link
+     * ExtentLoggingAppender} - {@code getCaseData}'s own {@code LOGGER.info(...)} call is enough),
+     * since that bridge mirrors every {@code com.framework}/{@code com.tests} log line into the
+     * report automatically; Allure has no equivalent bridge for arbitrary log lines, so this is
+     * the one explicit call needed to give it the same visibility.</p>
+     */
+    public static void attachTestCaseMetadata(String testCaseId, String testCaseName) {
+        try {
+            Allure.parameter("Test Case ID", testCaseId);
+            Allure.parameter("Test Case Name", testCaseName);
+        } catch (RuntimeException e) {
+            LOGGER.warn("Failed to attach test case metadata ('{}') to Allure: {}", testCaseId, e.getMessage());
+        }
+    }
 }

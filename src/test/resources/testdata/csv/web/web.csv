@@ -1,0 +1,3 @@
+"name","metadata.testCaseId","metadata.testCaseName","data.email","data.password"
+"validLogin","TC-WEB-LOGIN-001","User logs in successfully with valid credentials and lands on the home page","${{EVENTHUB_EMAIL}}","${{EVENTHUB_PASSWORD}}"
+"invalidLogin","TC-WEB-LOGIN-002","User sees an invalid-credentials error when logging in with the wrong password","${{EVENTHUB_EMAIL}}","DefinitelyTheWrongPassword1!"

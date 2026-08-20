@@ -1,0 +1,22 @@
+{
+  "validLogin": {
+    "metadata": {
+      "testCaseId": "TC-WEB-LOGIN-001",
+      "testCaseName": "User logs in successfully with valid credentials and lands on the home page"
+    },
+    "data": {
+      "email": "${{EVENTHUB_EMAIL}}",
+      "password": "${{EVENTHUB_PASSWORD}}"
+    }
+  },
+  "invalidLogin": {
+    "metadata": {
+      "testCaseId": "TC-WEB-LOGIN-002",
+      "testCaseName": "User sees an invalid-credentials error when logging in with the wrong password"
+    },
+    "data": {
+      "email": "${{EVENTHUB_EMAIL}}",
+      "password": "DefinitelyTheWrongPassword1!"
+    }
+  }
+}

@@ -7,6 +7,9 @@ import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
 import com.framework.config.ConfigManager;
 import com.framework.constants.ConfigKeys;
 import com.framework.exceptions.TestDataException;
+import com.framework.reporting.AllureManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <pre>
  * TestDataManager.load("login.json").get("validLogin", LoginData.class);
  * TestDataManager.load("events.csv").dataProvider(); // straight into a TestNG @DataProvider
+ * TestDataManager.getCaseData("web/web", "validLogin", LoginTestCase.class); // file + case name -&gt; data, logged
  * </pre>
  *
  * <p>Dispatches to a {@link TestDataReader} by file extension, under a fixed
@@ -53,6 +57,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * per-access resolution keeps that true.</p>
  */
 public final class TestDataManager {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(TestDataManager.class);
 
     private static final String BASE_FOLDER = "testdata";
 
@@ -121,6 +127,34 @@ public final class TestDataManager {
         String resourcePath = BASE_FOLDER + "/" + FORMAT_FOLDER_BY_EXTENSION.get(extension) + "/" + resolvedFileName;
         List<Map<String, Object>> rawRecords = CACHE.computeIfAbsent(resourcePath, reader::read);
         return new TestData(rawRecords, CONVERSION_MAPPER, resourcePath);
+    }
+
+    /**
+     * The one call a test needs to go from "a file name and a case name" to "that case's data,
+     * ready to use" - {@code TestDataManager.getCaseData("web/web", "validLogin",
+     * LoginTestCase.class)} - instead of every test class re-typing {@code
+     * load(file).get(name, Type.class)} plus its own logging line. Requires {@code T} to
+     * implement {@link TestCaseRecord} (any record shaped {@code (TestCaseMetadata metadata, D
+     * data)} does, for free), so this works identically for every test-case shape without this
+     * class needing to know what any of them look like.
+     *
+     * <p><b>Pass {@code fileName} without an extension</b> (e.g. {@code "web/web"}, not
+     * {@code "web/web.json"}) unless the case genuinely needs to pin one format regardless of
+     * {@link ConfigKeys#TEST_DATA_FORMAT} - see {@link #resolveFileName} below. A hardcoded
+     * {@code .json} silently defeats this framework's YAML/CSV/Excel support for that call site:
+     * {@code testdata.format=yaml} would still read the JSON file.</p>
+     *
+     * <p>Also surfaces {@code testCaseId}/{@code testCaseName} in both reports - logged (which
+     * the Logback-to-Extent bridge turns into an Extent step automatically) and attached to
+     * Allure as parameters ({@link AllureManager#attachTestCaseMetadata}) - so a test failure in
+     * either report is immediately traceable to the exact named case, without a test author
+     * adding any reporting code themselves.</p>
+     */
+    public static <D, T extends TestCaseRecord<D>> D getCaseData(String fileName, String caseName, Class<T> caseType) {
+        T testCase = load(fileName).get(caseName, caseType);
+        LOGGER.info("[{}] {}", testCase.metadata().testCaseId(), testCase.metadata().testCaseName());
+        AllureManager.attachTestCaseMetadata(testCase.metadata().testCaseId(), testCase.metadata().testCaseName());
+        return testCase.data();
     }
 
     /**

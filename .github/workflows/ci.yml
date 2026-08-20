@@ -11,9 +11,7 @@ name: CI
 # filtering to a group name that would silently match zero tests and report a false-green
 # build.
 #
-# Mobile is excluded (no emulator/Appium on a hosted runner), and so is `frameworkSelfTest`
-# (RetryBehaviorTest's deliberately-always-failing method - see its own Javadoc for why that
-# group exists).
+# Mobile is excluded (no emulator/Appium on a hosted runner).
 #
 # Audit finding fix: this used to run exactly one browser per job (a fixed 'chrome' default,
 # or whatever single value a manual dispatch passed) despite the framework supporting four -
@@ -78,7 +76,7 @@ jobs:
         run: >
           mvn -B clean test
           -Denv=qa -Dgroups=smoke -Dbrowser=${{ matrix.browser }} -Dheadless=true
-          -DexcludedGroups=mobile,frameworkSelfTest
+          -DexcludedGroups=mobile
 
       - name: Upload test artifacts
         if: always()
@@ -120,7 +118,7 @@ jobs:
         run: >
           mvn -B clean test
           -Denv=qa -Dgroups= -Dbrowser=${{ matrix.browser }} -Dheadless=true
-          -DexcludedGroups=mobile,frameworkSelfTest
+          -DexcludedGroups=mobile
 
       - name: Upload test artifacts
         if: always()
@@ -162,7 +160,7 @@ jobs:
           -Dgroups=${{ github.event.inputs.groups }}
           -Dbrowser=${{ github.event.inputs.browser || 'chrome' }}
           -Dheadless=true
-          -DexcludedGroups=mobile,frameworkSelfTest
+          -DexcludedGroups=mobile
 
       - name: Upload test artifacts
         if: always()

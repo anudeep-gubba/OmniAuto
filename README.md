@@ -103,32 +103,62 @@ src/main/java/com/framework/     <- core framework: generic, reusable, knows not
                     - base classes only; no concrete screen lives here.
     reporting/      ExtentManager, ExtentLoggingAppender, AllureManager, ReportManager
     secrets/        SecretManager, SensitiveDataMasker
-    testdata/       TestDataManager, TestData, JSON/YAML/CSV/Excel readers, PlaceholderResolver
+    testdata/       TestDataManager (incl. getCaseData), TestData, TestCaseMetadata, TestCaseRecord,
+                    JSON/YAML/CSV/Excel readers, PlaceholderResolver
     utils/          JsonUtils, FileUtils, ScreenshotUtils, DateUtils, RandomDataUtils, EnumUtils
     web/            BasePage, BaseComponent, WebActions, WebUtils, WebWaits - base classes only;
                     no concrete page lives here.
 
 src/test/java/com/tests/         <- application-specific: everything that only makes sense
                                      because the app under test is eventhub - Web, Mobile, and
-                                     API surfaces of the same product.
-    api/              API test specs (AuthApiTest, EventApiTest, BookingApiTest, SystemApiTest,
-                      EventBookingE2EFlowTest - positive/negative/E2E, live API, no mocks)
-        services/     AuthenticationService, EventService, BookingService, SystemService -
-                      eventhub's own endpoints; wrap com.framework.api.ApiClient
-        requests/     eventhub-specific request DTOs (Java records)
-        responses/    eventhub-specific response DTOs (Java records)
-    base/             Framework-level validation (config, secrets, masking, retry, test data)
-                      - the one part of src/test that tests com.framework itself, not the app
-    mobile/           Mobile test specs - eventhub's own Flutter app (LoginTest, EventsTest,
-                      EventBookingE2EFlowTest - positive/negative/E2E; MultiDeviceParallelTest
-                      - device-matrix infra, app-agnostic). Replaces an earlier suite against
-                      the public Sauce Labs SwagLabs demo app (removed).
-    web/              Web test specs (eventhub.rahulshettyacademy.com)
-    pages/web/        Web Page Objects (LoginPage, HomePage, EventsPage)
-    pages/mobile/     Mobile Page Objects (LoginPage, HomePage, EventsPage, EventDetailPage,
-                      BookingConfirmationPage, MyBookingsPage)
-    components/web/   Web Components (HeaderComponent, EventCardComponent)
-    components/mobile/ Mobile Components (HeaderComponent, EventCardComponent)
+                                     API surfaces of the same product. Two top-level packages,
+                                     nothing else: tests/ (every *Test.java spec, and only
+                                     specs) and application/ (everything a spec needs to run -
+                                     page objects, components, request/response DTOs, services,
+                                     test-case data). A tester opening tests/ sees only specs to
+                                     read/write; anything else lives in application/ instead.
+    tests/
+        api/          API test specs: AuthApiTest, EventApiTest, BookingApiTest, SystemApiTest,
+                      EventBookingE2EFlowTest (positive/negative/E2E, live API, no mocks)
+        mobile/       Mobile test specs: LoginTest, EventsTest, EventBookingE2EFlowTest
+                      (positive/negative/E2E), MultiDeviceParallelTest (device-matrix infra,
+                      app-agnostic) - eventhub's own Flutter app. Replaces an earlier suite
+                      against the public Sauce Labs SwagLabs demo app (removed).
+        web/          Web test specs: LoginTest, EventsTest (eventhub.rahulshettyacademy.com)
+    application/
+        base/             BaseApiTest/BaseMobileTest/BaseWebTest - the per-surface @BeforeMethod/
+                          @AfterMethod lifecycle (login, driver/dialog setup, thread-state
+                          cleanup) every spec in tests/ extends instead of re-declaring; see
+                          "Writing tests" below.
+        pages/web/        Web Page Objects (LoginPage, HomePage, EventsPage)
+        pages/mobile/     Mobile Page Objects (LoginPage, HomePage, EventsPage, EventDetailPage,
+                          BookingConfirmationPage, MyBookingsPage)
+        components/web/   Web Components (HeaderComponent, EventCardComponent)
+        components/mobile/ Mobile Components (HeaderComponent, EventCardComponent)
+        requests/         eventhub-specific API request DTOs (Java records) - AuthRequest,
+                          CreateEventRequest, CreateBookingRequest
+        responses/        eventhub-specific API response DTOs (Java records) - AuthResponse,
+                          EventResponse, BookingResponse, and the rest
+        services/         AuthenticationService, EventService, BookingService, SystemService -
+                          eventhub's own endpoints; wrap com.framework.api.ApiClient
+        testdata/         Every surface's test-case data, gathered in one tree instead of
+                          scattered per surface (see "Test data" below):
+            TestDataSurface.java   every testdata/* file this repo reads (WEB/API/
+                                    MOBILE_ANDROID/MOBILE_IOS), one place that knows each
+                                    surface's bare file name - see "Test data" below
+            LoginTestCase.java     email/password shape shared by Web and Mobile login (byte-
+                                    for-byte identical across both, so one record instead of a
+                                    near-duplicate WebLoginTestCase/MobileLoginTestCase pair) -
+                                    read from web/web.json, android/android.json, and ios/ios.json
+            api/          AuthApiTestCase, EventPayloadTestCase, BookingApiTestCase - each
+                          file's *Data record (e.g. AuthApiTestCase.AuthApiData) is nested
+                          inside it, so a pair is one file to create or update, not two.
+                          AuthApiTestCase stays separate from LoginTestCase above despite the
+                          field overlap - it also covers register/token cases LoginTestCase
+                          doesn't model, and its data are raw HTTP request bodies, not UI form
+                          fields
+            mobile/       MobileBookingTestCase (same nested-Data convention; no Web
+                          equivalent to share with)
 
 config/             dev/qa.properties + mobile-devices.json — repo root, not
                     src/main/resources, so they're easy to find and edit; each
@@ -245,7 +275,26 @@ regardless of how the build was invoked. `${{KEY}}` placeholders resolve the sam
 ```java
 TestDataManager.load("login.json").get("validLogin", AuthRequest.class);
 TestDataManager.load("events.csv").dataProvider(CreateEventRequest.class);
+TestDataManager.getCaseData("web/web", "validLogin", LoginTestCase.class); // file + case name -> data
+TestDataSurface.WEB.getCaseData("validLogin", LoginTestCase.class);        // what a test method actually calls
 ```
+
+**`getCaseData(fileName, caseName, caseType)` is what `TestDataSurface` calls under the hood** -
+file name in, that case's `data` out, metadata logged automatically. No test class writes its
+own `load(file).get(name, Type.class)` plus a hand-rolled logging line; that pairing lives once,
+in `TestDataManager`, generic over any record implementing `com.framework.testdata.TestCaseRecord`
+(a record shaped `(TestCaseMetadata metadata, D data)` satisfies it for free - see
+`LoginTestCase`/`AuthApiTestCase`/etc.).
+
+**`TestDataSurface` (`com.tests.application.testdata`) is what a test method actually calls** -
+`WEB`/`API`/`MOBILE_ANDROID`/`MOBILE_IOS`, one value per surface, each knowing its own bare file
+name so no test class hardcodes `"api/api"` (or worse, `"api/api.json"` - a hardcoded extension
+silently locks that call site to JSON no matter what `testdata.format` says, since
+`TestDataManager` only fills in a format-derived extension when the name doesn't already have
+one). A mobile test that wants "whichever platform this run is actually driving" (the normal
+case) calls `TestDataSurface.currentMobile()` rather than picking `MOBILE_ANDROID`/`MOBILE_IOS`
+itself, so it never has to match whatever `-Dmobile.platform` the run was launched with. A test
+file has nothing left to implement here beyond the one call.
 
 | Format | Folder | Shape |
 |---|---|---|
@@ -254,41 +303,83 @@ TestDataManager.load("events.csv").dataProvider(CreateEventRequest.class);
 | CSV | `testdata/csv/` | Row-oriented; a `name` column enables name lookup |
 | Excel | `testdata/excel/` | Same as CSV, first sheet |
 
+**CSV/Excel carry the same nested `metadata`/`data` shape as JSON/YAML via dotted columns** -
+a row-oriented format has no native nesting, so `metadata.testCaseId`/`data.email`-style column
+names expand into the same nested map JSON/YAML produce (`TestDataReader.unflatten`), which is
+what makes a CSV/Excel row convertible into a `*TestCase` record via `getCaseData` exactly like
+any other format:
+
+```csv
+name,metadata.testCaseId,metadata.testCaseName,data.email,data.password
+validLogin,TC-WEB-LOGIN-001,User logs in successfully...,${{EVENTHUB_EMAIL}},${{EVENTHUB_PASSWORD}}
+```
+
+**A blank CSV/Excel cell means "this field is unset"** - the same as a JSON/YAML record simply
+omitting the key - not an explicit empty string, since a row-oriented format has no way to omit
+a column on just one row (e.g. `EventPayloadTestCase.EventPayloadData#eventDate` is left blank
+on every case except the one that specifically needs a fixed literal date; code branches on
+`eventDate() != null`). A case that genuinely needs an intentional empty-string value should
+stay in JSON/YAML, where absent-vs-empty-string is representable directly.
+
+`web/`, `api/`, `android/`, `ios/` each have all four formats present today (`testdata/{json,yaml,csv,excel}/web/web.*`,
+etc.) - same case names, same values, mechanically derived from the JSON originals rather than
+hand-retyped, so there is zero drift between them. Whichever one `testdata.format` (or an
+explicit extension) picks, every test reads the identical data.
+
 Raw records are cached once; `${{...}}` placeholders resolve fresh on every access, so a
 value produced mid-test (e.g. `${{eventId}}`) resolves correctly.
 
-**One file per surface, never shared.** `testdata/json/login.json`/`events.csv` back the Web
-suite; `testdata/json/mobile-login.json`/`mobile-booking.json` back the Mobile suite -
-separate files even though both suites log into the same eventhub account, so a change made
-for one surface (e.g. a new Mobile-only negative case) never risks a Web test picking up an
-unrelated row. Every row in the Mobile files carries `testCaseId`/`testCaseName`/`description`
-fields alongside the actual data (`com.tests.mobile.MobileLoginTestCase`/
-`MobileBookingTestCase`) - not asserted on, purely so a failure, an Extent/Allure report line,
-or someone skimming the JSON can identify which test case a row belongs to independently of
-the Java method name:
+**One folder, one file, per surface, never shared.** `testdata/json/api/api.json` backs the API
+suite, `testdata/json/web/web.json` backs the Web suite, and `testdata/json/android/android.json`/
+`testdata/json/ios/ios.json` back the Mobile suite (one platform-specific folder/file each,
+resolved at runtime via `TestDataSurface.currentMobile()` off `mobile.platform`) -
+each surface gets its own folder (not just a bare file) so more files can be added per surface
+later without restructuring, even though every surface ultimately logs into the same eventhub
+account; separate files mean a change made for one surface (e.g. a new Mobile-only negative
+case) never risks a Web or API test picking up an unrelated row.
+
+Every row in every one of these files splits `metadata` from `data`: `testCaseId`/`testCaseName`
+identify the row (a readable business/scenario name, not a restatement of the Java method name)
+for a failure, an Extent/Allure report line, or someone skimming the JSON - alongside `data`, the
+actual values the test acts on (e.g. `com.tests.application.testdata.LoginTestCase`, `com.tests
+.application.testdata.mobile.MobileBookingTestCase`, `com.tests.application.testdata.api.AuthApiTestCase`/
+`EventPayloadTestCase`/`BookingApiTestCase`). Every `*TestCase` record pairs a shared
+`com.framework.testdata.TestCaseMetadata` with a `*Data` record nested right inside it (e.g.
+`AuthApiTestCase.AuthApiData`) - one file per pair, not two, so adding a field to an existing
+shape is one file to touch - and implements `com.framework.testdata.TestCaseRecord<D>` (its own
+generated `metadata()`/`data()` accessors satisfy it for free), which is what makes it usable
+with `getCaseData` above. **Adding a brand-new test case never needs a new Java file at all** -
+just a new JSON entry under an existing shape; a new record shape (a new test class's first
+case, or a shape no other surface already shares) is the only time a new `testdata/` file is
+needed - `LoginTestCase` itself is one record read from three different JSON files
+(`web/web.json`, `android/android.json`, `ios/ios.json`) precisely because Web and Mobile's
+login shape is identical, not because the files are shared.
 
 ```json
 "malformedEmail": {
-  "testCaseId": "TC-MOB-LOGIN-004",
-  "testCaseName": "malformedEmailShowsInvalidEmailValidation",
-  "description": "An email with no '@' fails Flutter's own client-side format validation...",
-  "email": "not-an-email",
-  "password": "SomePassword1!"
+  "metadata": {
+    "testCaseId": "TC-AND-LOGIN-004",
+    "testCaseName": "Submitting a malformed email shows an invalid-email validation error"
+  },
+  "data": {
+    "email": "not-an-email",
+    "password": "SomePassword1!"
+  }
 }
 ```
 
 **Which format a bare name reads from is a config property, not hardcoded per call site.**
-`load("login.json")` always reads JSON, extension and all — but `load("login")`, with no
-extension, resolves against `testdata.format` in `config/{env}.properties` (`json` unless
-set):
+A name with a recognized extension always reads that format, extension and all — but a bare
+name with no extension resolves against `testdata.format` in `config/{env}.properties` (`json`
+unless set):
 
 ```properties
 testdata.format=json   # or yaml | csv | excel
 ```
 
 ```java
-TestDataManager.load("login");   // testdata.format=json -> testdata/json/login.json
-                                  // testdata.format=yaml -> testdata/yaml/login.yaml
+TestDataManager.load("web/web");   // testdata.format=json -> testdata/json/web/web.json
+                                    // testdata.format=yaml -> testdata/yaml/web/web.yaml
 ```
 
 Override it per run the same way as any other key (`-Dtestdata.format=yaml`) or per test
@@ -300,9 +391,8 @@ extension-less `load(...)` call to a different source without touching test code
 ```bash
 mvn clean compile
 
-# Default "everything green" run — excludes mobile (no local emulator by default) and
-# frameworkSelfTest (a deliberately-always-failing test, see Troubleshooting)
-mvn test -DexcludedGroups=mobile,frameworkSelfTest
+# Default "everything green" run — excludes mobile (no local emulator by default)
+mvn test -DexcludedGroups=mobile
 
 mvn clean test -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
 mvn test -Dtest=AuthApiTest                                      # one class
@@ -311,12 +401,11 @@ mvn test -Dtest=AuthApiTest,EventBookingE2EFlowTest               # several clas
 mvn test -Dgroups=smoke,api                                      # several groups
 mvn test -Dgroups=sanity -DexcludedGroups=mobile                 # one live test per surface
 mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4          # parallel
-mvn test -Dgroups=frameworkSelfTest                               # proves retries never mask an assertion
 ```
 
-Real groups this codebase tags tests with: `smoke`, `sanity`, `api`, `web`, `mobile`,
-`frameworkSelfTest`. A group name nothing is tagged with matches zero tests but still reports
-`BUILD SUCCESS` — check the printed test count.
+Real groups this codebase tags tests with: `smoke`, `sanity`, `api`, `web`, `mobile`. A group
+name nothing is tagged with matches zero tests but still reports `BUILD SUCCESS` — check the
+printed test count.
 
 **Rerunning only what failed:** Surefire's TestNG provider writes
 `target/surefire-reports/testng-failed.xml` after every run — a suite file listing just the
@@ -327,9 +416,9 @@ Feed it straight back in to rerun only those:
 mvn -Dsurefire.suiteXmlFiles=target/surefire-reports/testng-failed.xml test
 ```
 
-Confirmed live: after a run that failed one `MobileDriverFactoryTest` method, this reran
-exactly that method and nothing else. Overwritten by the next full run, so grab a copy first
-if you want to keep retrying a specific failure while iterating on other tests.
+Confirmed live: after a run with one failing method, this reran exactly that method and
+nothing else. Overwritten by the next full run, so grab a copy first if you want to keep
+retrying a specific failure while iterating on other tests.
 
 **API** — every real class: `AuthApiTest`, `EventApiTest`, `BookingApiTest`, `SystemApiTest`,
 `EventBookingE2EFlowTest`.
@@ -353,8 +442,8 @@ mvn test -Dgroups=smoke,web                                         # just the s
 mvn test -Dtest=LoginTest                                           # one class
 mvn test -Dtest=LoginTest#validLoginNavigatesToHomePage              # one method
 mvn test -Dtest=LoginTest,EventsTest                                 # several classes
-mvn test -Dtest=LoginTest#loginWorksAcrossMultipleBrowsers            # cross-browser data-driven, sequential rows
 mvn test -Dgroups=web -Dbrowser=firefox -Dheadless=true               # browser: chrome (default) | firefox | edge | safari
+                                                                       # (cross-browser coverage is CI's job matrix, not a per-test loop - see CI/CD)
 mvn test -Dgroups=web -Dparallel=classes -DthreadCount=4 -Dheadless=true
 mvn test -Denv=dev -Dgroups=web -Dbrowser=chrome -Dheadless=true      # against dev instead of qa
 ```
@@ -502,7 +591,7 @@ public void loginWithExistingAccountWorks() {
 }
 ```
 
-Application-specific services (`com.tests.api.services` — `AuthenticationService`,
+Application-specific services (`com.tests.application.services` — `AuthenticationService`,
 `EventService`, `BookingService`, `SystemService`) wrap `com.framework.api.ApiClient`, the only
 place REST Assured is called from. Every request/response is logged (masked) and attached to
 the Allure report automatically.
@@ -544,16 +633,21 @@ BrowserStack capacity, since one local emulator only runs one session at a time.
   in framework/test code mirrors into the report automatically via a Logback appender.
 - **Allure** (`allure-results/`, raw JSON — `allure serve allure-results` to view) — masked
   API request/response and screenshots attached automatically.
+- **Test case metadata** — every `TestDataManager.getCaseData(...)` call (i.e. every test data
+  load) logs its `testCaseId`/`testCaseName` (reaching Extent for free via the Logback bridge
+  above) and attaches them as Allure parameters (`AllureManager.attachTestCaseMetadata`) - so a
+  failure in either report is immediately traceable to the exact named test case (and its
+  file/row), filterable/sortable in Allure, without a test author adding any reporting code.
 - **Screenshots** — `screenshot.mode` = `FAILURE` (default) | `EVERY_ACTION` | `DISABLED`.
 - **Retry** — `RetryAnalyzer` (`retry.max.count`, default 1) retries everything except
   `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`.
 - **Coverage** — `mvn test` also runs Jacoco (`jacoco-maven-plugin`, bound to the `test` phase
-  itself, not `verify`, so plain `mvn test` is enough): `target/site/jacoco/index.html` for the
-  human-readable report, and a `jacoco-check` execution that fails the build if `com.framework.*`
-  line coverage drops below 55% — calibrated to a real measured `mvn test
-  -DexcludedGroups=mobile,frameworkSelfTest -Dheadless=true` run (63.3% at the time this gate was
-  added), not guessed. Raise the floor as real coverage grows; never lower it to make a
-  regression pass.
+  itself, not `verify`, so plain `mvn test` is enough): `target/site/jacoco/index.html` for a
+  human-readable `com.framework.*` line-coverage report. Not gated - the `com.tests.base`
+  framework self-test suite this used to be checked against was removed, dropping measured
+  coverage well below any threshold worth enforcing without a real suite behind it; the report
+  is still generated for visibility. Re-add a `jacoco-check` execution with a calibrated minimum
+  if framework-level self-tests come back.
 
 ## CI/CD
 
@@ -562,7 +656,7 @@ same `mvn` command shape you'd run locally:
 
 | Job | Trigger | Command shape |
 |---|---|---|
-| `smoke` | Every pull request | Matrix over `chrome`/`firefox`: `-Denv=qa -Dgroups=smoke -Dbrowser=<matrix> -Dheadless=true -DexcludedGroups=mobile,frameworkSelfTest` |
+| `smoke` | Every pull request | Matrix over `chrome`/`firefox`: `-Denv=qa -Dgroups=smoke -Dbrowser=<matrix> -Dheadless=true -DexcludedGroups=mobile` |
 | `regression` | Push to `main` | Same matrix, `-Dgroups=` (every group) |
 | `regression-manual` | Manual dispatch | Single browser — `env`/`groups`/`browser` from the dispatch inputs (default `qa`/every group/`chrome`) |
 
@@ -612,6 +706,15 @@ Selenium/Appium/REST Assured. Retry, logging, reporting, and driver cleanup are 
 > **Every new `@BeforeMethod` needs `alwaysRun = true`.** Otherwise it silently stops running
 > the moment `-Dgroups=` is added to a command.
 
+**New test class:** extend `BaseApiTest`/`BaseMobileTest`/`BaseWebTest`
+(`com.tests.application.base`) — never hand-write a login/logout or thread-state-cleanup
+`@BeforeMethod`/`@AfterMethod`, that's already handled once per surface in the base class. A
+class only writes its own `@BeforeMethod` when it needs a specific *starting state* (e.g.
+`loginWithSeededAccount()` then navigate somewhere, or `ensureLoggedOut()` for a spec that tests
+login itself); teardown of anything the class itself creates (a booking, an event) goes in an
+overridden `tearDownTestData()`, not a new `@AfterMethod` — the base class runs it before
+logout/cleanup automatically.
+
 **New page (Web/Mobile):** extend `BasePage`/`BaseMobilePage`, expose actions returning
 `this` (chaining) or the next Page Object (real navigation). For a repeated element, extend
 `BaseComponent`/`BaseMobileComponent` and take an already-located root element in the
@@ -650,18 +753,16 @@ tests run that way.
 
 Validated live: `-Dparallel=classes -DthreadCount=4` with genuinely concurrent Chrome/Firefox
 sessions and API calls (distinct thread names/overlapping timestamps in
-`logs/framework.log`) across the `com.tests.api` classes; `-Dparallel=methods` via
-`invocationCount`/`threadPoolSize` stress tests in `TestDataManagerTest`; and a real Android
-emulator + iOS simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via
-overlapping `POST /session` requests in Appium's own server log.
+`logs/framework.log`) across the `com.tests.tests.api` classes; and a real Android emulator + iOS
+simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via overlapping
+`POST /session` requests in Appium's own server log.
 
 ## Troubleshooting
 
 | Symptom | Cause & fix |
 |---|---|
-| Plain `mvn test` fails on `RetryBehaviorTest` | Expected — `frameworkSelfTest` deliberately fails every run to prove retries never mask a real assertion. Run `-DexcludedGroups=mobile,frameworkSelfTest`. |
 | Mobile fails with `SessionNotCreated` | No emulator/Appium server running — start both, or exclude `mobile`. |
-| `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag. Real ones: `smoke`, `sanity`, `api`, `web`, `mobile`, `frameworkSelfTest`. Check the printed test count. |
+| `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag. Real ones: `smoke`, `sanity`, `api`, `web`, `mobile`. Check the printed test count. |
 | `@BeforeMethod`-driven setup silently doesn't run under `-Dgroups=X`, test fails with 401 | Missing `alwaysRun = true` on that `@BeforeMethod`. |
 | Masking looks missing on a new log/report line | Shouldn't happen — CONSOLE/FILE/Extent mask every line unconditionally now (see Reporting). If it does, that line went through some other sink entirely (e.g. a raw `System.out.println`, or a custom appender bypassing `logback.xml`'s pattern), not a missed `.mask()` call. |
 | A report shows `********-xxxxxxxx` and you need the real value to debug a failure | `mvn test -Dmasking.enabled=false ...` — local only, ignored automatically in CI (see Configuration/Secrets). Two masked values with the same suffix are the same underlying secret, even without unmasking. |

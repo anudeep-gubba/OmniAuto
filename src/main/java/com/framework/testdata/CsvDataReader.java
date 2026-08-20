@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +23,15 @@ import java.util.Map;
  * name,city,category
  * validEvent,Testville,Conference
  * invalidEvent,,Conference
+ * </pre>
+ *
+ * <p>A dotted column name (e.g. {@code metadata.testCaseId}, {@code data.email}) nests via
+ * {@link TestDataReader#unflatten} - the convention that lets a CSV row carry the same
+ * {@code (metadata, data)}-shaped {@code *TestCase} record JSON/YAML already can:</p>
+ *
+ * <pre>
+ * name,metadata.testCaseId,metadata.testCaseName,data.email,data.password
+ * validLogin,TC-WEB-LOGIN-001,User logs in successfully...,${{EVENTHUB_EMAIL}},${{EVENTHUB_PASSWORD}}
  * </pre>
  *
  * <p>All values come back as {@link String} - opencsv does not infer types, and neither
@@ -42,7 +50,7 @@ final class CsvDataReader implements TestDataReader {
                 new InputStreamReader(FileUtils.openClasspathResource(classpathResource), StandardCharsets.UTF_8))) {
             Map<String, String> row;
             while ((row = reader.readMap()) != null) {
-                records.add(new LinkedHashMap<>(row));
+                records.add(TestDataReader.unflatten(row));
             }
         } catch (IOException | CsvValidationException e) {
             throw new TestDataException("Failed to read/parse CSV test data file '" + classpathResource + "'.", e);
