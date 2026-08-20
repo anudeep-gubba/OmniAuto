@@ -35,6 +35,20 @@ public final class ConfigKeys {
     // Retry (requirement.md section 23)
     public static final String RETRY_MAX_COUNT = "retry.max.count";
 
+    // Reporting - whether each run overwrites the previous Extent report (reports/extent/
+    // index.html, the historical default) or writes its own timestamped file instead, so
+    // successive local runs can be compared side by side. See ExtentManager.
+    public static final String REPORT_OVERWRITE = "report.overwrite";
+
+    // Which report(s) this run actually enriches - a comma-separated subset of "extent"/
+    // "allure", default "extent" only. Gates every place this framework's own code does
+    // reporting work beyond a bare pass/fail (Extent node creation and all its step logging,
+    // every Allure attachment/step/parameter-masking call) - not allure-testng's own native
+    // pass/fail/@Before-After capture, which auto-registers itself the moment it's on the
+    // classpath and can't be silenced from a runtime flag (a build-time Maven profile would be
+    // needed for that). See ReportManager#isExtentEnabled/isAllureEnabled.
+    public static final String REPORT_TYPES = "report.types";
+
     // Test data (requirement.md section 15) - the default source format TestDataManager.load()
     // resolves an extension-less file name against, e.g. "login" -> testdata/json/login.json
     // when this is "json". An explicit extension in the call (e.g. "login.yaml") always wins

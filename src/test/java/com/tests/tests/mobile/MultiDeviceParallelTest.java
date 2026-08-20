@@ -10,7 +10,7 @@ import io.appium.java_client.AppiumDriver;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.assertNotNull;
+import static com.framework.utils.Verify.assertNotNull;
 
 /**
  * Requirement.md &sect;20 (parallel execution) applied to mobile specifically: a device

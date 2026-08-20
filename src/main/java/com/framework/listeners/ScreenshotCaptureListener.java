@@ -5,8 +5,14 @@ import com.framework.constants.ConfigKeys;
 import com.framework.driver.MobileDriverManager;
 import com.framework.driver.WebDriverManager;
 import com.framework.enums.ScreenshotMode;
+import com.framework.reporting.AllureManager;
 import com.framework.reporting.ReportManager;
+import com.framework.secrets.SensitiveDataMasker;
 import com.framework.utils.ScreenshotUtils;
+import io.appium.java_client.AppiumDriver;
+import io.appium.java_client.android.AndroidDriver;
+import org.openqa.selenium.HasCapabilities;
+import org.openqa.selenium.WebDriver;
 import org.testng.IInvokedMethod;
 import org.testng.IInvokedMethodListener;
 import org.testng.ITestResult;
@@ -40,6 +46,16 @@ import java.nio.file.Path;
  * run before that listener's own {@code afterInvocation}) and Allure via
  * {@link ReportManager#attachScreenshot(Path, String)} (Phase 11), requirement.md &sect;19:
  * "Screenshots should automatically attach to Extent and Allure."</p>
+ *
+ * <p><b>The same correctly-ordered "driver is still alive" window is reused for every other
+ * failure-time diagnostic a real driver can answer</b> - page source, current URL, browser/
+ * version (Web), device name/platform version/current activity (Mobile) - rather than adding
+ * yet another listener that would need to re-derive this exact ordering guarantee itself. All
+ * of it goes to Allure only ({@link AllureManager}, already no-op when Allure is disabled) -
+ * Extent already gets the equivalent business narrative for free via the Logback bridge, and a
+ * screenshot/page-source dump is exactly the kind of large, low-signal-until-you-need-it detail
+ * this project's own Extent-vs-Allure split (see README's Reporting section) puts on the Allure
+ * side deliberately.</p>
  */
 public class ScreenshotCaptureListener implements IInvokedMethodListener {
 
@@ -55,10 +71,45 @@ public class ScreenshotCaptureListener implements IInvokedMethodListener {
         }
         Path screenshot = null;
         if (WebDriverManager.isDriverActive()) {
-            screenshot = ScreenshotUtils.capture(WebDriverManager.getDriver(), testResult.getName());
+            WebDriver driver = WebDriverManager.getDriver();
+            screenshot = ScreenshotUtils.capture(driver, testResult.getName());
+            attachWebFailureDetail(driver);
         } else if (MobileDriverManager.isDriverActive()) {
-            screenshot = ScreenshotUtils.capture(MobileDriverManager.getDriver(), testResult.getName());
+            AppiumDriver driver = MobileDriverManager.getDriver();
+            screenshot = ScreenshotUtils.capture(driver, testResult.getName());
+            attachMobileFailureDetail(driver);
         }
         ReportManager.attachScreenshot(screenshot, testResult.getName());
+    }
+
+    private static void attachWebFailureDetail(WebDriver driver) {
+        AllureManager.attachParameter("Current URL", SensitiveDataMasker.mask(driver.getCurrentUrl()));
+        if (driver instanceof HasCapabilities hasCapabilities) {
+            var capabilities = hasCapabilities.getCapabilities();
+            AllureManager.attachParameter("Browser", String.valueOf(capabilities.getBrowserName()));
+            AllureManager.attachParameter("Browser Version", String.valueOf(capabilities.getBrowserVersion()));
+        }
+        AllureManager.attachText("Page Source", SensitiveDataMasker.mask(driver.getPageSource()));
+    }
+
+    private static void attachMobileFailureDetail(AppiumDriver driver) {
+        // AppiumDriver implements HasCapabilities unconditionally (unlike the plain WebDriver
+        // interface in attachWebFailureDetail, which doesn't) - no instanceof check needed here.
+        var capabilities = driver.getCapabilities();
+        AllureManager.attachParameter("Device Name", String.valueOf(capabilities.getCapability("deviceName")));
+        AllureManager.attachParameter("Platform", String.valueOf(capabilities.getPlatformName()));
+        AllureManager.attachParameter("Platform Version", String.valueOf(capabilities.getCapability("platformVersion")));
+        // currentActivity() is Android-only (AndroidDriver implements StartsActivity); iOS has
+        // no direct equivalent, so this is best-effort and silently skipped there rather than
+        // forced.
+        if (driver instanceof AndroidDriver androidDriver) {
+            try {
+                AllureManager.attachParameter("Current Activity", androidDriver.currentActivity());
+            } catch (RuntimeException ignored) {
+                // Best-effort - some drivers/app states don't support this query; not worth
+                // failing an otherwise-complete failure-diagnostics attachment over.
+            }
+        }
+        AllureManager.attachText("Page Source", SensitiveDataMasker.mask(driver.getPageSource()));
     }
 }

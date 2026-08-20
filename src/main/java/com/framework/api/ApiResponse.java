@@ -1,11 +1,15 @@
 package com.framework.api;
 
+import com.aventstack.extentreports.Status;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.framework.exceptions.ApiException;
+import com.framework.reporting.ExtentManager;
 import com.framework.secrets.SensitiveDataMasker;
 import com.framework.utils.JsonUtils;
 import io.restassured.path.json.JsonPath;
 import io.restassured.response.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Wraps REST Assured's {@link Response} with the operations tests actually
@@ -15,6 +19,8 @@ import io.restassured.response.Response;
  * validation, response time assertions, ...).
  */
 public final class ApiResponse {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(ApiResponse.class);
 
     private final Response response;
 
@@ -60,14 +66,32 @@ public final class ApiResponse {
         return JsonUtils.fromJson(body(), typeReference);
     }
 
+    /**
+     * The most-called assertion in this codebase (63 call sites) - logs its own PASS/FAIL step
+     * to both reports either way, the same reasoning as {@link com.framework.utils.Verify}
+     * (a bare {@code org.testng.Assert}-style check is invisible while it passes; this one
+     * predates {@code Verify} and throws its own {@link ApiException} rather than an {@link
+     * AssertionError}, so it logs itself directly instead of routing through that class).
+     */
     public ApiResponse assertStatusCode(int expected) {
         if (statusCode() != expected) {
             // Masked (RULE 7/19): this exception message is the most broadly-used failure
             // surface in the whole framework - it must not leak a secret an error response
             // happens to echo back, same as ApiClient's own request/response logging already does.
-            throw new ApiException("Expected status code " + expected + " but got " + statusCode()
-                    + ". Body: " + SensitiveDataMasker.mask(body()));
+            // Phrased as "expected X but got Y", not the success message's flat restatement
+            // below - a report reader scanning failures only needs the mismatch spelled out,
+            // where a passing row's "X but got X" would just read as a pointless tautology.
+            String failMessage = "Expected status code " + expected + " but got " + statusCode()
+                    + ". Body: " + SensitiveDataMasker.mask(body());
+            ApiException exception = new ApiException(failMessage);
+            LOGGER.error(failMessage, exception);
+            ExtentManager.logAssertion(Status.FAIL, failMessage);
+            ExtentManager.logStackTrace(exception);
+            throw exception;
         }
+        String passMessage = "Status code is " + expected + " as expected.";
+        LOGGER.info(passMessage);
+        ExtentManager.logAssertion(Status.PASS, passMessage);
         return this;
     }
 

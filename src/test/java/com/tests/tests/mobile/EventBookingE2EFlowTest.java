@@ -15,8 +15,8 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertFalse;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * The mobile equivalent of {@link com.tests.tests.api.EventBookingE2EFlowTest}: the same
@@ -44,7 +44,7 @@ public class EventBookingE2EFlowTest extends BaseMobileTest {
         }
     }
 
-    @Test(groups = {"smoke", "mobile"})
+    @Test(groups = {"smoke", "mobile", "e2e", "events", "bookings"})
     public void bookingFlowFromLoginThroughConfirmationAndMyBookingsWorksEndToEnd() {
         MobileBookingData data = TestDataSurface.currentMobile().getCaseData("standardBooking", MobileBookingTestCase.class);
 

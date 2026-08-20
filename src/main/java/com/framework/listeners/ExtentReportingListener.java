@@ -6,6 +6,7 @@ import com.framework.driver.MobileDriverManager;
 import com.framework.driver.WebDriverManager;
 import com.framework.reporting.ExtentManager;
 import com.framework.secrets.SecretManager;
+import com.framework.utils.TextUtils;
 import org.testng.IInvokedMethod;
 import org.testng.IInvokedMethodListener;
 import org.testng.ITestContext;
@@ -63,14 +64,28 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
         if (!method.isTestMethod()) {
             return;
         }
-        String name = method.getTestMethod().getRealClass().getSimpleName() + "." + method.getTestMethod().getMethodName();
+        String className = method.getTestMethod().getRealClass().getSimpleName();
+        String methodName = method.getTestMethod().getMethodName();
+        // TextUtils.humanize() is only for the report title text - the method name itself is
+        // untouched, so -Dtest=Class#method selection, IDE navigation, and the console's
+        // [%X{test}] correlation tag (see logback.xml, deliberately left as the compact
+        // Class.method form for fast grep-ability) all keep working exactly as before.
+        String name = className + " — " + TextUtils.humanize(methodName);
         Integer retryAttempt = RetryAnalyzer.CURRENT_ATTEMPT.get();
         RetryAnalyzer.CURRENT_ATTEMPT.remove();
         if (retryAttempt != null && retryAttempt > 0) {
             name += " (Retry " + retryAttempt + ")";
         }
 
+        // Audit finding, verified live: startTest() returns null when Extent is disabled
+        // (report.types excludes "extent" - see ExtentManager's own javadoc), and this loop
+        // dereferenced it unconditionally - every single test failed with a
+        // NullPointerException the moment someone actually ran with Extent disabled, since
+        // that path had never been exercised until now.
         ExtentTest test = ExtentManager.startTest(name);
+        if (test == null) {
+            return;
+        }
         for (String group : method.getTestMethod().getGroups()) {
             test.assignCategory(group);
         }

@@ -20,10 +20,10 @@ import org.testng.annotations.Test;
 import java.util.List;
 import java.util.Map;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertEquals;
+import static com.framework.utils.Verify.assertFalse;
+import static com.framework.utils.Verify.assertNotNull;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Full positive/negative coverage of eventhub's {@code /events} CRUD endpoints, against the live
@@ -39,7 +39,14 @@ public class EventApiTest extends BaseApiTest {
 
     private final EventService eventService = new EventService();
 
-    private Integer createdEventId;
+    // ThreadLocal, not a plain field (audit finding, verified live with -Dparallel=methods
+    // -DthreadCount=8): TestNG runs every @Test method of a class on one shared instance under
+    // method-level parallelism, not one instance per thread/method - a plain field here let one
+    // thread's write clobber another's before it read the value back, corrupting both the
+    // assertion (wrong event ID compared) and cleanup (tearDownTestData() could delete a
+    // different thread's still-in-use event). Same reasoning as com.framework.api.ApiContext/
+    // ConfigManager's own thread-local tiers.
+    private final ThreadLocal<Integer> createdEventId = new ThreadLocal<>();
 
     // alwaysRun = true: TestNG silently skips a @BeforeMethod lacking this when a group
     // include-filter is active (-Dgroups=smoke), leaving the @Test unauthenticated instead of
@@ -51,9 +58,9 @@ public class EventApiTest extends BaseApiTest {
 
     @Override
     protected void tearDownTestData() {
-        if (createdEventId != null) {
-            eventService.deleteEvent(createdEventId);
-            createdEventId = null;
+        if (createdEventId.get() != null) {
+            eventService.deleteEvent(createdEventId.get());
+            createdEventId.remove();
         }
     }
 
@@ -69,51 +76,53 @@ public class EventApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- create: positive
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "events", "positive"})
     public void creatingAnEventWithAllFieldsPersistsEveryField() {
         EventPayloadData data = TestDataSurface.API.getCaseData("fullFieldsEvent", EventPayloadTestCase.class);
         CreateEventRequest request = toRequest("Full Fields Event " + RandomDataUtils.uniqueId(), data);
 
         ApiResponse response = eventService.createEvent(request);
-        response.assertStatusCode(201);
+        response.assertStatusCode(data.expectedStatusCode());
 
-        createdEventId = response.jsonPath().getInt("data.id");
+        createdEventId.set(response.jsonPath().getInt("data.id"));
         EventResponse event = response.extract("data", EventResponse.class);
-        assertEquals(event.title(), request.title());
-        assertEquals(event.description(), request.description());
-        assertEquals(event.category(), request.category());
-        assertEquals(event.venue(), request.venue());
-        assertEquals(event.city(), request.city());
-        assertEquals(event.totalSeats(), request.totalSeats());
+        assertEquals(event.title(), request.title(), "Persisted event title should match what was submitted.");
+        assertEquals(event.description(), request.description(), "Persisted event description should match what was submitted.");
+        assertEquals(event.category(), request.category(), "Persisted event category should match what was submitted.");
+        assertEquals(event.venue(), request.venue(), "Persisted event venue should match what was submitted.");
+        assertEquals(event.city(), request.city(), "Persisted event city should match what was submitted.");
+        assertEquals(event.totalSeats(), request.totalSeats(), "Persisted event total seats should match what was submitted.");
         // availableSeats is automatically set equal to totalSeats on creation, per the API's own documented behavior.
-        assertEquals(event.availableSeats(), request.totalSeats());
-        assertEquals(event.imageUrl(), request.imageUrl());
+        assertEquals(event.availableSeats(), request.totalSeats(), "A freshly created event should start with every seat available.");
+        assertEquals(event.imageUrl(), request.imageUrl(), "Persisted event image URL should match what was submitted.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "positive"})
     public void creatingAnEventWithOnlyRequiredFieldsSucceeds() {
-        CreateEventRequest request = freshEventRequest("Required Fields Only Event " + RandomDataUtils.uniqueId());
+        EventPayloadData data = TestDataSurface.API.getCaseData("defaultEvent", EventPayloadTestCase.class);
+        CreateEventRequest request = toRequest("Required Fields Only Event " + RandomDataUtils.uniqueId(), data);
 
         ApiResponse response = eventService.createEvent(request);
-        response.assertStatusCode(201);
+        response.assertStatusCode(data.expectedStatusCode());
 
-        createdEventId = response.jsonPath().getInt("data.id");
-        assertTrue(createdEventId > 0);
+        createdEventId.set(response.jsonPath().getInt("data.id"));
+        assertTrue(createdEventId.get() > 0, "Created event should be assigned a positive numeric id.");
     }
 
     // ---------------------------------------------------------------- create: negative
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void creatingAnEventWithoutAuthReturns401() {
+        EventPayloadData data = TestDataSurface.API.getCaseData("unauthenticatedEventCreate", EventPayloadTestCase.class);
         authService.logout();
 
         ApiResponse response = eventService.createEvent(freshEventRequest("Should Never Be Created"));
 
-        response.assertStatusCode(401);
-        assertEquals(response.jsonPath().getString("error"), "Unauthorized");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("error"), data.expectedError());
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void creatingAnEventWithNoBodyFieldsReturnsEveryRequiredFieldAsAValidationError() {
         ApiResponse response = ApiClient.execute(ApiRequest.post("/events").body(Map.of()));
 
@@ -123,50 +132,51 @@ public class EventApiTest extends BaseApiTest {
                 "Every required field should be flagged: " + fields);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void creatingAnEventWithNegativePriceAndSeatsFailsValidation() {
         EventPayloadData data = TestDataSurface.API.getCaseData("negativePriceAndSeatsEvent", EventPayloadTestCase.class);
         CreateEventRequest request = toRequest("Negative Values Event", data);
 
         ApiResponse response = eventService.createEvent(request);
 
-        response.assertStatusCode(400);
+        response.assertStatusCode(data.expectedStatusCode());
         List<String> fields = response.jsonPath().getList("details.field", String.class);
-        assertTrue(fields.contains("price"));
-        assertTrue(fields.contains("totalSeats"));
+        assertTrue(fields.contains("price"), "Validation errors should flag the negative price.");
+        assertTrue(fields.contains("totalSeats"), "Validation errors should flag the negative seat count.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void creatingAnEventWithAPastDateFailsValidation() {
         EventPayloadData data = TestDataSurface.API.getCaseData("pastDateEvent", EventPayloadTestCase.class);
         CreateEventRequest request = toRequest("Past Date Event", data);
 
         ApiResponse response = eventService.createEvent(request);
 
-        response.assertStatusCode(400);
-        assertEquals(response.jsonPath().getString("details[0].field"), "eventDate");
-        assertEquals(response.jsonPath().getString("details[0].message"), "Event date must be in the future");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("details[0].field"), data.expectedField());
+        assertEquals(response.jsonPath().getString("details[0].message"), data.expectedMessage());
     }
 
     // ---------------------------------------------------------------- get by id
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "events", "positive"})
     public void gettingAnExistingEventByIdReturnsIt() {
-        createdEventId = eventService.createEvent(freshEventRequest("Get By Id Event " + RandomDataUtils.uniqueId()))
-                .jsonPath().getInt("data.id");
+        createdEventId.set(eventService.createEvent(freshEventRequest("Get By Id Event " + RandomDataUtils.uniqueId()))
+                .jsonPath().getInt("data.id"));
 
-        ApiResponse response = eventService.getEvent(createdEventId);
+        ApiResponse response = eventService.getEvent(createdEventId.get());
 
         response.assertStatusCode(200);
-        assertEquals(response.jsonPath().getInt("data.id"), createdEventId.intValue());
+        assertEquals(response.jsonPath().getInt("data.id"), createdEventId.get());
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void gettingANonexistentEventReturns404WithAnExplanatoryMessage() {
+        EventPayloadData data = TestDataSurface.API.getCaseData("nonexistentEventLookup", EventPayloadTestCase.class);
         ApiResponse response = eventService.getEvent(999_999);
 
-        response.assertStatusCode(404);
-        assertEquals(response.jsonPath().getString("error"), "Event with id 999999 not found");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("error"), data.expectedError());
     }
 
     /**
@@ -174,26 +184,26 @@ public class EventApiTest extends BaseApiTest {
      * validation before it reaches the database layer, and surfaces as a generic 500 rather than
      * a 400/404 - worth locking in as a regression test precisely because it is surprising.
      */
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void gettingAnEventByANonNumericIdReturns500NotAValidationError() {
         ApiResponse response = ApiClient.execute(ApiRequest.get("/events/{id}").pathParam("id", "not-a-number"));
 
         response.assertStatusCode(500);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void gettingAnotherUsersEventReturns404NotForbidden() {
         // Verified live: eventhub scopes every event to its creating account. A second account
         // gets an ordinary "not found" 404 for a real event ID it simply doesn't own - not 403.
         AuthApiData secondAccount = TestDataSurface.API.getCaseData("secondAccountForEventIsolation", AuthApiTestCase.class);
         String secondUserEmail = RandomDataUtils.uniqueEmail("event.isolation");
-        createdEventId = eventService.createEvent(freshEventRequest("Isolation Target Event " + RandomDataUtils.uniqueId()))
-                .jsonPath().getInt("data.id");
+        createdEventId.set(eventService.createEvent(freshEventRequest("Isolation Target Event " + RandomDataUtils.uniqueId()))
+                .jsonPath().getInt("data.id"));
         authService.logout();
 
         authService.register(secondUserEmail, secondAccount.password());
         try {
-            ApiResponse response = eventService.getEvent(createdEventId);
+            ApiResponse response = eventService.getEvent(createdEventId.get());
             response.assertStatusCode(404);
         } finally {
             authService.logout();
@@ -203,36 +213,36 @@ public class EventApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- list: positive
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "events", "positive"})
     public void listingEventsReturnsAPaginatedEnvelope() {
         ApiResponse response = eventService.listEvents(1, 5);
 
         response.assertStatusCode(200);
-        assertTrue(response.jsonPath().getBoolean("success"));
-        assertEquals(response.jsonPath().getInt("pagination.page"), 1);
-        assertEquals(response.jsonPath().getInt("pagination.limit"), 5);
-        assertTrue(response.jsonPath().getList("data").size() <= 5);
+        assertTrue(response.jsonPath().getBoolean("success"), "List response should report success.");
+        assertEquals(response.jsonPath().getInt("pagination.page"), 1, "Response pagination should echo back the requested page.");
+        assertEquals(response.jsonPath().getInt("pagination.limit"), 5, "Response pagination should echo back the requested limit.");
+        assertTrue(response.jsonPath().getList("data").size() <= 5, "Result count should not exceed the requested page limit.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "positive"})
     public void listingEventsFiltersByCategory() {
         EventPayloadData data = TestDataSurface.API.getCaseData("sportsCategoryEvent", EventPayloadTestCase.class);
-        createdEventId = eventService.createEvent(
+        createdEventId.set(eventService.createEvent(
                 toRequest("Category Filter Event " + RandomDataUtils.uniqueId(), data))
-                .jsonPath().getInt("data.id");
+                .jsonPath().getInt("data.id"));
 
         ApiResponse response = eventService.listEvents(Map.of("category", data.category(), "limit", 100));
 
-        response.assertStatusCode(200);
+        response.assertStatusCode(data.expectedStatusCode());
         List<String> categories = response.jsonPath().getList("data.category", String.class);
-        assertFalse(categories.isEmpty());
+        assertFalse(categories.isEmpty(), "Filtering by a category with a just-created event should return at least one result.");
         assertTrue(categories.stream().allMatch(data.category()::equals), "Every result should be " + data.category() + ": " + categories);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "positive"})
     public void listingEventsFreeTextSearchMatchesTitle() {
         String uniqueTitle = "Searchable Unique Title " + RandomDataUtils.uniqueId();
-        createdEventId = eventService.createEvent(freshEventRequest(uniqueTitle)).jsonPath().getInt("data.id");
+        createdEventId.set(eventService.createEvent(freshEventRequest(uniqueTitle)).jsonPath().getInt("data.id"));
 
         ApiResponse response = eventService.listEvents(Map.of("search", "Searchable Unique Title"));
 
@@ -241,7 +251,7 @@ public class EventApiTest extends BaseApiTest {
         assertTrue(titles.contains(uniqueTitle), "Search results should include the newly created event: " + titles);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void listingEventsWithoutAuthReturns401() {
         authService.logout();
 
@@ -252,46 +262,46 @@ public class EventApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- update
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "events", "positive"})
     public void updatingAnEventChangesItsFields() {
-        createdEventId = eventService.createEvent(freshEventRequest("Before Update " + RandomDataUtils.uniqueId()))
-                .jsonPath().getInt("data.id");
+        createdEventId.set(eventService.createEvent(freshEventRequest("Before Update " + RandomDataUtils.uniqueId()))
+                .jsonPath().getInt("data.id"));
 
         EventPayloadData updateData = TestDataSurface.API.getCaseData("eventUpdate", EventPayloadTestCase.class);
         CreateEventRequest updateRequest = toRequest("After Update " + RandomDataUtils.uniqueId(), updateData);
-        ApiResponse response = eventService.updateEvent(createdEventId, updateRequest);
+        ApiResponse response = eventService.updateEvent(createdEventId.get(), updateRequest);
 
-        response.assertStatusCode(200);
-        assertEquals(response.jsonPath().getString("data.title"), updateRequest.title());
-        assertEquals(response.jsonPath().getString("data.category"), "Festival");
-        assertEquals(response.jsonPath().getInt("data.totalSeats"), 75);
+        response.assertStatusCode(updateData.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("data.title"), updateRequest.title(), "Update response should echo back the new title.");
+        assertEquals(response.jsonPath().getString("data.category"), updateRequest.category(), "Update response should echo back the new category.");
+        assertEquals(response.jsonPath().getInt("data.totalSeats"), updateRequest.totalSeats(), "Update response should echo back the new seat count.");
 
-        EventResponse fetched = eventService.getEvent(createdEventId).extract("data", EventResponse.class);
-        assertEquals(fetched.title(), updateRequest.title());
+        EventResponse fetched = eventService.getEvent(createdEventId.get()).extract("data", EventResponse.class);
+        assertEquals(fetched.title(), updateRequest.title(), "A fresh GET after updating should show the new title durably, not just in the PUT's own response.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void updatingANonexistentEventReturns404() {
         ApiResponse response = eventService.updateEvent(999_999, freshEventRequest("Ghost Update"));
 
         response.assertStatusCode(404);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void updatingAnEventWithInvalidDataFailsValidation() {
-        createdEventId = eventService.createEvent(freshEventRequest("Invalid Update Target " + RandomDataUtils.uniqueId()))
-                .jsonPath().getInt("data.id");
+        createdEventId.set(eventService.createEvent(freshEventRequest("Invalid Update Target " + RandomDataUtils.uniqueId()))
+                .jsonPath().getInt("data.id"));
 
         EventPayloadData badData = TestDataSurface.API.getCaseData("invalidEventUpdate", EventPayloadTestCase.class);
         CreateEventRequest badUpdate = toRequest("Bad Update", badData);
-        ApiResponse response = eventService.updateEvent(createdEventId, badUpdate);
+        ApiResponse response = eventService.updateEvent(createdEventId.get(), badUpdate);
 
-        response.assertStatusCode(400);
+        response.assertStatusCode(badData.expectedStatusCode());
     }
 
     // ---------------------------------------------------------------- delete
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "events", "positive"})
     public void deletingAnEventThenGettingItReturns404() {
         int eventId = eventService.createEvent(freshEventRequest("Delete Me " + RandomDataUtils.uniqueId()))
                 .jsonPath().getInt("data.id");
@@ -304,7 +314,7 @@ public class EventApiTest extends BaseApiTest {
         // Not tracked in createdEventId - already deleted, so cleanup() has nothing left to do.
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void deletingAnAlreadyDeletedEventReturns404OnTheSecondCall() {
         int eventId = eventService.createEvent(freshEventRequest("Double Delete " + RandomDataUtils.uniqueId()))
                 .jsonPath().getInt("data.id");
@@ -315,11 +325,11 @@ public class EventApiTest extends BaseApiTest {
         secondDelete.assertStatusCode(404);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "events", "negative"})
     public void deletingANonexistentEventReturns404() {
         ApiResponse response = eventService.deleteEvent(999_999);
 
         response.assertStatusCode(404);
-        assertNotNull(response.jsonPath().getString("error"));
+        assertNotNull(response.jsonPath().getString("error"), "Deleting a non-existent event should return an explanatory error message.");
     }
 }

@@ -19,9 +19,9 @@ import org.testng.annotations.Test;
 import java.util.List;
 import java.util.Map;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertEquals;
+import static com.framework.utils.Verify.assertNotNull;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Full positive/negative coverage of eventhub's {@code /bookings} endpoints, against the live
@@ -39,8 +39,14 @@ public class BookingApiTest extends BaseApiTest {
     private final EventService eventService = new EventService();
     private final BookingService bookingService = new BookingService();
 
-    private Integer createdEventId;
-    private Integer createdBookingId;
+    // ThreadLocal, not a plain field (audit finding, verified live with -Dparallel=methods
+    // -DthreadCount=8): TestNG runs every @Test method of a class on one shared instance under
+    // method-level parallelism, not one instance per thread/method - a plain field here let one
+    // thread's write clobber another's, so tearDownTestData() could cancel/delete a different
+    // thread's still-in-use booking/event. Same reasoning as com.framework.api.ApiContext/
+    // ConfigManager's own thread-local tiers.
+    private final ThreadLocal<Integer> createdEventId = new ThreadLocal<>();
+    private final ThreadLocal<Integer> createdBookingId = new ThreadLocal<>();
 
     @BeforeMethod(alwaysRun = true)
     public void logIn() {
@@ -49,13 +55,13 @@ public class BookingApiTest extends BaseApiTest {
 
     @Override
     protected void tearDownTestData() {
-        if (createdBookingId != null) {
-            bookingService.cancelBooking(createdBookingId);
-            createdBookingId = null;
+        if (createdBookingId.get() != null) {
+            bookingService.cancelBooking(createdBookingId.get());
+            createdBookingId.remove();
         }
-        if (createdEventId != null) {
-            eventService.deleteEvent(createdEventId);
-            createdEventId = null;
+        if (createdEventId.get() != null) {
+            eventService.deleteEvent(createdEventId.get());
+            createdEventId.remove();
         }
     }
 
@@ -64,7 +70,7 @@ public class BookingApiTest extends BaseApiTest {
                 "Booking Test Event " + RandomDataUtils.uniqueId(), "Workshop", "Venue", "City",
                 DateUtils.futureIsoDate(30), 50.0, totalSeats);
         int id = eventService.createEvent(request).jsonPath().getInt("data.id");
-        createdEventId = id;
+        createdEventId.set(id);
         return id;
     }
 
@@ -75,21 +81,21 @@ public class BookingApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- create: positive
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "bookings", "positive"})
     public void bookingTicketsDecrementsAvailableSeatsAndReturnsABookingRef() {
         BookingApiData data = TestDataSurface.API.getCaseData("standardBookingScenario", BookingApiTestCase.class);
         int eventId = createEventWithSeats(data.totalSeats());
 
         ApiResponse response = bookingService.createBooking(validBookingFor(eventId, data.quantity()));
-        response.assertStatusCode(201);
+        response.assertStatusCode(data.expectedStatusCode());
 
         BookingResponse booking = response.extract("data", BookingResponse.class);
-        createdBookingId = booking.id();
-        assertEquals(booking.eventId(), eventId);
-        assertEquals(booking.quantity(), data.quantity().intValue());
-        assertEquals(booking.status(), "confirmed");
-        assertNotNull(booking.bookingRef());
-        assertTrue(booking.bookingRef().length() > 0);
+        createdBookingId.set(booking.id());
+        assertEquals(booking.eventId(), eventId, "Booking should reference the event it was made against.");
+        assertEquals(booking.quantity(), data.quantity().intValue(), "Booking should record the requested ticket quantity.");
+        assertEquals(booking.status(), data.expectedBookingStatus(), "A freshly created booking should be confirmed.");
+        assertNotNull(booking.bookingRef(), "Booking should be issued a server-generated reference code.");
+        assertTrue(booking.bookingRef().length() > 0, "Booking reference should not be an empty string.");
 
         // The nested "event" snapshot on the booking response is pre-transaction and stale
         // (verified live) - a fresh GET is required to observe the atomic seat decrement.
@@ -98,64 +104,69 @@ public class BookingApiTest extends BaseApiTest {
                 data.totalSeats() + " total - " + data.quantity() + " booked should leave " + (data.totalSeats() - data.quantity()) + " available.");
     }
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "bookings", "positive"})
     public void bookingExactlyAllRemainingSeatsSucceeds() {
         BookingApiData data = TestDataSurface.API.getCaseData("exactRemainingSeatsScenario", BookingApiTestCase.class);
         int eventId = createEventWithSeats(data.totalSeats());
 
         ApiResponse response = bookingService.createBooking(validBookingFor(eventId, data.quantity()));
 
-        response.assertStatusCode(201);
-        createdBookingId = response.jsonPath().getInt("data.id");
+        response.assertStatusCode(data.expectedStatusCode());
+        createdBookingId.set(response.jsonPath().getInt("data.id"));
         EventResponse afterBooking = eventService.getEvent(eventId).extract("data", EventResponse.class);
-        assertEquals(afterBooking.availableSeats(), 0);
+        assertEquals(afterBooking.availableSeats(), 0, "Booking every remaining seat should leave none available.");
     }
 
     // ---------------------------------------------------------------- create: negative
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingMoreTicketsThanAvailableSeatsFails() {
         BookingApiData data = TestDataSurface.API.getCaseData("overbookingScenario", BookingApiTestCase.class);
         int eventId = createEventWithSeats(data.totalSeats());
 
         ApiResponse response = bookingService.createBooking(validBookingFor(eventId, data.quantity()));
 
-        response.assertStatusCode(400);
+        response.assertStatusCode(data.expectedStatusCode());
         assertEquals(response.jsonPath().getString("error"),
-                "Only " + data.totalSeats() + " seat(s) available, but " + data.quantity() + " requested");
+                "Only " + data.totalSeats() + " seat(s) available, but " + data.quantity() + " requested",
+                "Overbooking error message should state the actual seat shortfall.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingForANonexistentEventReturns404() {
+        BookingApiData data = TestDataSurface.API.getCaseData("nonexistentEventBooking", BookingApiTestCase.class);
         ApiResponse response = bookingService.createBooking(validBookingFor(999_999, 1));
 
-        response.assertStatusCode(404);
-        assertEquals(response.jsonPath().getString("error"), "Event with id 999999 not found");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("error"), data.expectedError(),
+                "Booking a non-existent event should report which event id was not found.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingWithQuantityZeroFailsValidation() {
         BookingApiData data = TestDataSurface.API.getCaseData("zeroQuantityScenario", BookingApiTestCase.class);
         int eventId = createEventWithSeats(data.totalSeats());
 
         ApiResponse response = bookingService.createBooking(validBookingFor(eventId, data.quantity()));
 
-        response.assertStatusCode(400);
-        assertEquals(response.jsonPath().getString("details[0].field"), "quantity");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("details[0].field"), data.expectedField(),
+                "Validation error should flag 'quantity' as the invalid field.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingWithQuantityAboveTenFailsValidation() {
         BookingApiData data = TestDataSurface.API.getCaseData("aboveMaxQuantityScenario", BookingApiTestCase.class);
         int eventId = createEventWithSeats(data.totalSeats());
 
         ApiResponse response = bookingService.createBooking(validBookingFor(eventId, data.quantity()));
 
-        response.assertStatusCode(400);
-        assertEquals(response.jsonPath().getString("details[0].message"), "Quantity must be an integer between 1 and 10");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("details[0].message"), data.expectedMessage(),
+                "Validation error should explain the documented 1-10 quantity range.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingWithAnInvalidCustomerEmailFailsValidation() {
         BookingApiData data = TestDataSurface.API.getCaseData("invalidCustomerEmail", BookingApiTestCase.class);
         int eventId = createEventWithSeats(5);
@@ -163,11 +174,12 @@ public class BookingApiTest extends BaseApiTest {
 
         ApiResponse response = bookingService.createBooking(request);
 
-        response.assertStatusCode(400);
-        assertEquals(response.jsonPath().getString("details[0].field"), "customerEmail");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("details[0].field"), data.expectedField(),
+                "Validation error should flag 'customerEmail' as the invalid field.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingWithATooShortCustomerPhoneFailsValidation() {
         BookingApiData data = TestDataSurface.API.getCaseData("tooShortCustomerPhone", BookingApiTestCase.class);
         int eventId = createEventWithSeats(5);
@@ -175,11 +187,12 @@ public class BookingApiTest extends BaseApiTest {
 
         ApiResponse response = bookingService.createBooking(request);
 
-        response.assertStatusCode(400);
-        assertEquals(response.jsonPath().getString("details[0].field"), "customerPhone");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("details[0].field"), data.expectedField(),
+                "Validation error should flag 'customerPhone' as the invalid field.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void bookingWithoutAuthReturns401() {
         authService.logout();
 
@@ -190,43 +203,46 @@ public class BookingApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- get by id / by reference
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "bookings", "positive"})
     public void gettingABookingByIdAndByReferenceReturnTheSameBooking() {
         int eventId = createEventWithSeats(5);
         BookingResponse created = bookingService.createBooking(validBookingFor(eventId, 1)).extract("data", BookingResponse.class);
-        createdBookingId = created.id();
+        createdBookingId.set(created.id());
 
         BookingResponse byId = bookingService.getBooking(created.id()).extract("data", BookingResponse.class);
         BookingResponse byRef = bookingService.getBookingByReference(created.bookingRef()).extract("data", BookingResponse.class);
 
-        assertEquals(byId.bookingRef(), created.bookingRef());
-        assertEquals(byRef.id(), created.id());
+        assertEquals(byId.bookingRef(), created.bookingRef(), "Booking fetched by id should carry the same reference code it was created with.");
+        assertEquals(byRef.id(), created.id(), "Booking fetched by reference should resolve back to the same booking id.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void gettingANonexistentBookingByIdReturns404() {
+        BookingApiData data = TestDataSurface.API.getCaseData("nonexistentBookingLookup", BookingApiTestCase.class);
         ApiResponse response = bookingService.getBooking(999_999);
 
-        response.assertStatusCode(404);
-        assertEquals(response.jsonPath().getString("error"), "Booking with id 999999 not found");
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getString("error"), data.expectedError(),
+                "Looking up a non-existent booking should report which booking id was not found.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void gettingANonexistentBookingByReferenceReturns404() {
         BookingApiData data = TestDataSurface.API.getCaseData("nonexistentBookingReference", BookingApiTestCase.class);
         ApiResponse response = bookingService.getBookingByReference(data.bookingReference());
 
-        response.assertStatusCode(404);
-        assertTrue(response.jsonPath().getString("error").contains(data.bookingReference()));
+        response.assertStatusCode(data.expectedStatusCode());
+        assertTrue(response.jsonPath().getString("error").contains(data.bookingReference()),
+                "Not-found error should echo back the reference code that wasn't found.");
     }
 
     // ---------------------------------------------------------------- list
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "bookings", "positive"})
     public void listingBookingsFilteredByEventIdReturnsOnlyThatEventsBookings() {
         int eventId = createEventWithSeats(5);
         BookingResponse created = bookingService.createBooking(validBookingFor(eventId, 1)).extract("data", BookingResponse.class);
-        createdBookingId = created.id();
+        createdBookingId.set(created.id());
 
         ApiResponse response = bookingService.listBookingsForEvent(eventId);
 
@@ -235,18 +251,18 @@ public class BookingApiTest extends BaseApiTest {
         assertTrue(eventIds.stream().allMatch(id -> id == eventId), "Every result should reference event " + eventId + ": " + eventIds);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "positive"})
     public void listingBookingsRespectsPagination() {
         BookingApiData data = TestDataSurface.API.getCaseData("pageableListingScenario", BookingApiTestCase.class);
         ApiResponse response = bookingService.listBookings(Map.of("page", data.page(), "limit", data.limit()));
 
-        response.assertStatusCode(200);
-        assertEquals(response.jsonPath().getInt("pagination.page"), data.page().intValue());
-        assertEquals(response.jsonPath().getInt("pagination.limit"), data.limit().intValue());
-        assertTrue(response.jsonPath().getList("data").size() <= data.limit());
+        response.assertStatusCode(data.expectedStatusCode());
+        assertEquals(response.jsonPath().getInt("pagination.page"), data.page().intValue(), "Response pagination should echo back the requested page.");
+        assertEquals(response.jsonPath().getInt("pagination.limit"), data.limit().intValue(), "Response pagination should echo back the requested limit.");
+        assertTrue(response.jsonPath().getList("data").size() <= data.limit(), "Result count should not exceed the requested page limit.");
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void listingBookingsWithoutAuthReturns401() {
         authService.logout();
 
@@ -257,16 +273,18 @@ public class BookingApiTest extends BaseApiTest {
 
     // ---------------------------------------------------------------- cancel
 
-    @Test(groups = {"smoke", "api"})
+    @Test(groups = {"smoke", "api", "bookings", "positive"})
     public void cancellingABookingRestoresTheSeatAndMakesItUnretrievable() {
+        BookingApiData data = TestDataSurface.API.getCaseData("bookingCancellation", BookingApiTestCase.class);
         int eventId = createEventWithSeats(3);
         int bookingId = bookingService.createBooking(validBookingFor(eventId, 2)).jsonPath().getInt("data.id");
-        assertEquals(eventService.getEvent(eventId).jsonPath().getInt("data.availableSeats"), 1);
+        assertEquals(eventService.getEvent(eventId).jsonPath().getInt("data.availableSeats"), 1, "Booking 2 of 3 seats should leave 1 available.");
 
         ApiResponse cancelResponse = bookingService.cancelBooking(bookingId);
 
-        cancelResponse.assertStatusCode(200);
-        assertEquals(cancelResponse.jsonPath().getString("message"), "Booking cancelled");
+        cancelResponse.assertStatusCode(data.expectedStatusCode());
+        assertEquals(cancelResponse.jsonPath().getString("message"), data.expectedMessage(),
+                "Cancellation response should confirm the booking was cancelled.");
         assertEquals(eventService.getEvent(eventId).jsonPath().getInt("data.availableSeats"), 3, "Cancelling should restore all 2 seats.");
 
         // Cancelling deletes the row outright (verified live) rather than flagging it
@@ -274,7 +292,7 @@ public class BookingApiTest extends BaseApiTest {
         bookingService.getBooking(bookingId).assertStatusCode(404);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void cancellingAnAlreadyCancelledBookingReturns404OnTheSecondCall() {
         int eventId = createEventWithSeats(3);
         int bookingId = bookingService.createBooking(validBookingFor(eventId, 1)).jsonPath().getInt("data.id");
@@ -285,7 +303,7 @@ public class BookingApiTest extends BaseApiTest {
         secondCancel.assertStatusCode(404);
     }
 
-    @Test(groups = "api")
+    @Test(groups = {"api", "bookings", "negative"})
     public void cancellingANonexistentBookingReturns404() {
         ApiResponse response = bookingService.cancelBooking(999_999);
 

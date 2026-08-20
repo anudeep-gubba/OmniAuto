@@ -19,9 +19,16 @@ public record BookingApiTestCase(TestCaseMetadata metadata, BookingApiData data)
     /**
      * The {@code data} object of one row - see {@link BookingApiTestCase}.
      *
-     * <p>{@code quantity}/{@code totalSeats}/{@code page}/{@code limit} are boxed rather than
-     * primitive so a row that doesn't use one (e.g. a customer-validation case has no {@code
-     * totalSeats} of its own) leaves it {@code null} instead of a misleading {@code 0}.</p>
+     * <p>{@code quantity}/{@code totalSeats}/{@code page}/{@code limit}/{@code expectedStatusCode}
+     * are boxed rather than primitive so a row that doesn't use one (e.g. a customer-validation
+     * case has no {@code totalSeats} of its own) leaves it {@code null} instead of a misleading
+     * {@code 0}.</p>
+     *
+     * <p>{@code expectedStatusCode}/{@code expectedError}/{@code expectedMessage}/
+     * {@code expectedField}/{@code expectedBookingStatus} are the response-shape assertions each
+     * case expects - moved out of {@link com.tests.tests.api.BookingApiTest} and into data so an
+     * API contract change (a different status code, a reworded validation message) is a JSON
+     * edit, not a Java one, same reasoning as every other field here.</p>
      */
     public record BookingApiData(
             String customerName,
@@ -31,6 +38,11 @@ public record BookingApiTestCase(TestCaseMetadata metadata, BookingApiData data)
             Integer totalSeats,
             String bookingReference,
             Integer page,
-            Integer limit) {
+            Integer limit,
+            Integer expectedStatusCode,
+            String expectedError,
+            String expectedMessage,
+            String expectedField,
+            String expectedBookingStatus) {
     }
 }

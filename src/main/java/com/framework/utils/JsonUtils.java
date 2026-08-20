@@ -78,6 +78,26 @@ public final class JsonUtils {
         }
     }
 
+    /**
+     * Re-serializes an already-compact JSON string with indentation, for a log/report line
+     * that needs to stay human-readable ({@link com.framework.api.ApiClient}'s request/response
+     * logging - a single-line body of any real size reads as one indistinguishable wall of
+     * text). Falls back to {@code rawJson} unchanged if it isn't valid JSON (e.g. an empty body,
+     * or an API error response that returned plain text) - pretty-printing is a readability aid,
+     * never a reason to fail a request/response logging call over the shape of what came back.
+     */
+    public static String prettyPrintJson(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return rawJson;
+        }
+        try {
+            Object tree = OBJECT_MAPPER.readTree(rawJson);
+            return OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(tree);
+        } catch (Exception e) {
+            return rawJson;
+        }
+    }
+
     public static ObjectMapper objectMapper() {
         return OBJECT_MAPPER;
     }

@@ -9,7 +9,7 @@ import com.tests.application.pages.mobile.LoginPage;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Mobile login coverage for the eventhub app (apps/eventhub-app-simulator.app on iOS,
@@ -41,7 +41,7 @@ public class LoginTest extends BaseMobileTest {
 
     // Also "sanity": the narrowest "is the app fundamentally alive" checkpoint - one
     // representative live test per surface, distinct from "smoke". See README.md.
-    @Test(groups = {"smoke", "sanity", "mobile"})
+    @Test(groups = {"smoke", "sanity", "mobile", "auth", "positive"})
     public void validCredentialsLogInAndShowHomeScreen() {
         LoginData data = TestDataSurface.currentMobile().getCaseData("validCredentials", LoginTestCase.class);
 
@@ -52,7 +52,7 @@ public class LoginTest extends BaseMobileTest {
         assertTrue(homePage.isDisplayed(), "Home screen should show the logged-in header after a valid login.");
     }
 
-    @Test(groups = {"smoke", "mobile"})
+    @Test(groups = {"smoke", "mobile", "auth", "negative"})
     public void blankCredentialsShowRequiredFieldValidation() {
         TestDataSurface.currentMobile().getCaseData("blankCredentials", LoginTestCase.class);
 
@@ -64,7 +64,7 @@ public class LoginTest extends BaseMobileTest {
         assertTrue(loginPage.isDisplayed(), "A validation failure should not navigate away from the login screen.");
     }
 
-    @Test(groups = "mobile")
+    @Test(groups = {"mobile", "auth", "negative"})
     public void malformedEmailShowsInvalidEmailValidation() {
         LoginData data = TestDataSurface.currentMobile().getCaseData("malformedEmail", LoginTestCase.class);
 
@@ -80,7 +80,7 @@ public class LoginTest extends BaseMobileTest {
      * auth accepts any well-formed credentials, so a genuinely wrong password is not, in fact,
      * a negative case here - see {@link LoginPage}'s class javadoc.
      */
-    @Test(groups = "mobile")
+    @Test(groups = {"mobile", "auth", "positive"})
     public void loginSucceedsEvenWithAnIncorrectPassword() {
         LoginData data = TestDataSurface.currentMobile().getCaseData("incorrectPassword", LoginTestCase.class);
 

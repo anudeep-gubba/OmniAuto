@@ -6,7 +6,7 @@ import com.tests.application.pages.web.HomePage;
 import com.tests.application.pages.web.LoginPage;
 import org.testng.annotations.AfterMethod;
 
-import static org.testng.Assert.assertTrue;
+import static com.framework.utils.Verify.assertTrue;
 
 /**
  * Shared lifecycle for every Web spec, so an individual test class ({@code LoginTest},
