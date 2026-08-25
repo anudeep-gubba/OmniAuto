@@ -1,9 +1,8 @@
 package com.framework.api;
 
-import com.aventstack.extentreports.Status;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.framework.exceptions.ApiException;
-import com.framework.reporting.ExtentManager;
+import com.framework.reporting.ApiReportRecorder;
 import com.framework.secrets.SensitiveDataMasker;
 import com.framework.utils.JsonUtils;
 import io.restassured.path.json.JsonPath;
@@ -68,10 +67,12 @@ public final class ApiResponse {
 
     /**
      * The most-called assertion in this codebase (63 call sites) - logs its own PASS/FAIL step
-     * to both reports either way, the same reasoning as {@link com.framework.utils.Verify}
+     * to the API report either way, the same reasoning as {@link com.framework.utils.Verify}
      * (a bare {@code org.testng.Assert}-style check is invisible while it passes; this one
      * predates {@code Verify} and throws its own {@link ApiException} rather than an {@link
-     * AssertionError}, so it logs itself directly instead of routing through that class).
+     * AssertionError}, so it logs itself directly instead of routing through that class), as a
+     * plain Expected/Actual pair rather than a technical assertion sentence - see {@link
+     * ApiReportRecorder}'s javadoc for why this is the API report, not Extent/Allure.
      */
     public ApiResponse assertStatusCode(int expected) {
         if (statusCode() != expected) {
@@ -85,13 +86,12 @@ public final class ApiResponse {
                     + ". Body: " + SensitiveDataMasker.mask(body());
             ApiException exception = new ApiException(failMessage);
             LOGGER.error(failMessage, exception);
-            ExtentManager.logAssertion(Status.FAIL, failMessage);
-            ExtentManager.logStackTrace(exception);
+            ApiReportRecorder.logAssertion("Status Code", false, String.valueOf(expected), String.valueOf(statusCode()), failMessage);
             throw exception;
         }
         String passMessage = "Status code is " + expected + " as expected.";
         LOGGER.info(passMessage);
-        ExtentManager.logAssertion(Status.PASS, passMessage);
+        ApiReportRecorder.logAssertion("Status Code", true, String.valueOf(expected), String.valueOf(statusCode()), null);
         return this;
     }
 

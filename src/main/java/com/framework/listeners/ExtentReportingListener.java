@@ -61,7 +61,7 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
 
     @Override
     public void beforeInvocation(IInvokedMethod method, ITestResult testResult) {
-        if (!method.isTestMethod()) {
+        if (!method.isTestMethod() || isApiTest(method)) {
             return;
         }
         String className = method.getTestMethod().getRealClass().getSimpleName();
@@ -71,6 +71,18 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
         // [%X{test}] correlation tag (see logback.xml, deliberately left as the compact
         // Class.method form for fast grep-ability) all keep working exactly as before.
         String name = className + " — " + TextUtils.humanize(methodName);
+        // Best-effort, not guaranteed: only shows up when @BeforeMethod already created the
+        // driver before this @Test's own beforeInvocation fires (the common case - login/setup
+        // usually happens in @BeforeMethod) - see assignRuntimeCategory's javadoc for the
+        // always-correct fallback (afterInvocation, once the driver is certainly active).
+        // Matters most for MultiDeviceParallelTest's own -Dparallel matrix, where two
+        // concurrently-running rows on the same platform (e.g. "iPhone 17 Pro" vs "iPhone 17")
+        // would otherwise render as identical, indistinguishable titles.
+        if (MobileDriverManager.isDriverActive()) {
+            var capabilities = MobileDriverManager.getDriver().getCapabilities();
+            Object deviceName = capabilities.getCapability("deviceName");
+            name += " [" + capabilities.getPlatformName() + (deviceName != null ? " · " + deviceName : "") + "]";
+        }
         Integer retryAttempt = RetryAnalyzer.CURRENT_ATTEMPT.get();
         RetryAnalyzer.CURRENT_ATTEMPT.remove();
         if (retryAttempt != null && retryAttempt > 0) {
@@ -93,7 +105,7 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
 
     @Override
     public void afterInvocation(IInvokedMethod method, ITestResult testResult) {
-        if (!method.isTestMethod()) {
+        if (!method.isTestMethod() || isApiTest(method)) {
             return;
         }
         ExtentTest test = ExtentManager.getTest();
@@ -119,17 +131,51 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
         }
     }
 
-    /** Best-effort browser/platform tagging - only possible once a driver actually exists, i.e. by now, not at node creation. */
+    /**
+     * Browser/platform tagging - only possible once a driver actually exists, i.e. by now, not
+     * at node creation (see {@link #beforeInvocation}'s own best-effort title version, which
+     * runs too early to be guaranteed one is active yet).
+     *
+     * <p><b>Found in practice, not assumed:</b> a plain {@code "mobile"} category told a report
+     * reader nothing about which platform actually ran - indistinguishable from any other mobile
+     * test regardless of {@code -Dmobile.platform=ios} vs {@code android}, unlike Web's own
+     * {@code ConfigManager.getBrowser()} tag right above. Reads the live driver's own
+     * capabilities rather than {@link ConfigManager}'s {@code mobile.platform}/
+     * {@code mobile.device.name}: those are thread-local overrides
+     * ({@link com.framework.driver.DriverFactory#assignDeviceFromPool}) that {@link
+     * ConfigParameterListener#beforeInvocation} already clears before the {@code @Test} method
+     * itself runs (it resets tier-4/5 state before <em>every</em> invoked method, not just this
+     * one) - reading them here would silently fall back to the global default on a {@code
+     * -Dparallel} device-pool run, exactly the case (several concurrent platforms/devices) this
+     * exists to distinguish. The capabilities baked into the already-created driver have no such
+     * lifetime problem - same source {@link ScreenshotCaptureListener#attachMobileFailureDetail}
+     * already trusts for the same information.</p>
+     */
     private static void assignRuntimeCategory(ExtentTest test) {
         if (WebDriverManager.isDriverActive()) {
             test.assignCategory(ConfigManager.getBrowser());
         } else if (MobileDriverManager.isDriverActive()) {
-            test.assignCategory("mobile");
+            var capabilities = MobileDriverManager.getDriver().getCapabilities();
+            test.assignCategory(String.valueOf(capabilities.getPlatformName()));
+            Object deviceName = capabilities.getCapability("deviceName");
+            if (deviceName != null) {
+                test.assignCategory(String.valueOf(deviceName));
+            }
         }
     }
 
     @Override
     public void onFinish(ITestContext context) {
         ExtentManager.flush();
+    }
+
+    /** {@code true} for every API test ({@code "api"} TestNG group - see {@link ApiTestReportListener}'s javadoc) - those get their own self-contained HTML report instead and are deliberately excluded from Extent entirely, not just left detail-free. */
+    private static boolean isApiTest(IInvokedMethod method) {
+        for (String group : method.getTestMethod().getGroups()) {
+            if ("api".equals(group)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

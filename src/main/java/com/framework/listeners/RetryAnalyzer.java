@@ -20,6 +20,12 @@ import org.testng.ITestResult;
  * {@link com.framework.exceptions.ElementInteractionException}, a raw Selenium/Appium
  * exception, ...) is retried up to {@code retry.max.count} times.</p>
  *
+ * <p>Only ever attached to {@code @Test} methods - TestNG has no {@code retryAnalyzer} concept
+ * for {@code @Before}/{@code @After} configuration methods. {@link ConfigurationRetryListener}
+ * extends the same policy (same {@code retry.max.count}, same never-retry-an-{@link
+ * AssertionError} rule) to {@code @BeforeMethod}/{@code @AfterMethod} - see its own javadoc for
+ * why that gap mattered in practice.</p>
+ *
  * <p>Each retry attempt is logged clearly (never silently) and, via
  * {@link #CURRENT_ATTEMPT}, labeled in the Extent report by
  * {@link ExtentReportingListener} as e.g. "LoginTest.validLogin (Retry 1)" - a failed

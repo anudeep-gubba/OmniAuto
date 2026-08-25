@@ -37,8 +37,17 @@ public final class ConfigKeys {
 
     // Reporting - whether each run overwrites the previous Extent report (reports/extent/
     // index.html, the historical default) or writes its own timestamped file instead, so
-    // successive local runs can be compared side by side. See ExtentManager.
+    // successive local runs can be compared side by side. See ExtentManager. Also governs the
+    // separate API report (reports/api/index.html) the same way - one knob for both, not two -
+    // see ApiHtmlReportRenderer.
     public static final String REPORT_OVERWRITE = "report.overwrite";
+
+    // Branding for the API report only (reports/api/, see ApiHtmlReportRenderer) - Web/Mobile's
+    // Extent report has no equivalent of its own to stay consistent with (ExtentManager's title
+    // comes from ExtentSparkReporter's own config, not these keys). Both optional, sensible
+    // defaults if unset - see ConfigManager#getApiReportTitle/getApiReportName.
+    public static final String REPORT_API_TITLE = "report.api.title";
+    public static final String REPORT_API_NAME = "report.api.name";
 
     // Which report(s) this run actually enriches - a comma-separated subset of "extent"/
     // "allure", default "extent" only. Gates every place this framework's own code does

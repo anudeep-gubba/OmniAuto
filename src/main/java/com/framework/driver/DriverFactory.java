@@ -191,7 +191,8 @@ final class DriverFactory {
      *     from {@code config/{env}.properties}) picks {@code androidList} or {@code iosList};
      *     every test then uses that list's first id, sequentially.</li>
      *     <li><b>{@code -Dparallel} present:</b> each test checks a device out of
-     *     {@link MobileDevicePool} (both lists combined) and blocks if every device is
+     *     {@link MobileDevicePool} (both lists combined, unless {@code -Dmobile.platform} was
+     *     given explicitly - see that class's javadoc) and blocks if every device is
      *     currently busy - tests are distributed across the pool as a work queue, not one
      *     device per test regardless of load.</li>
      * </ul>

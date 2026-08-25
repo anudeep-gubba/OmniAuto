@@ -1,10 +1,12 @@
 package com.framework.driver;
 
+import com.framework.constants.ConfigKeys;
 import com.framework.exceptions.ConfigurationException;
 import com.framework.exceptions.DriverInitializationException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -25,7 +27,9 @@ import java.util.concurrent.LinkedBlockingQueue;
  *
  * <p>Devices come from {@code androidList} and {@code iosList} in {@code
  * config/mobile-devices.json} combined ({@link MobileDeviceMatrix#androidList()} /
- * {@link MobileDeviceMatrix#iosList()}). {@link DriverFactory} checks out a device in
+ * {@link MobileDeviceMatrix#iosList()}) - unless {@code -Dmobile.platform} is given explicitly,
+ * which narrows the pool to that one platform's list only (see {@link #loadPoolDevices()}).
+ * {@link DriverFactory} checks out a device in
  * {@code @BeforeMethod} (via {@code MobileDriverManager.getDriver()}); the checkout blocks if
  * every device is currently busy, so a run with more threads than devices queues automatically
  * rather than oversubscribing a device. {@code DriverCleanupListener} quitting the driver
@@ -86,17 +90,36 @@ final class MobileDevicePool {
         return result;
     }
 
+    /**
+     * Both lists combined by default (see class javadoc) - unless {@code -Dmobile.platform}
+     * was given explicitly on <em>this</em> command line, in which case the pool is narrowed to
+     * that one platform's list only (e.g. {@code -Dmobile.platform=ios -Dparallel=methods
+     * -DthreadCount=2} pools across {@code iosList} alone, with no {@code android1} entry ever
+     * checked out - useful when no Android emulator/device happens to be available for this run).
+     * Read via {@code System.getProperty} directly, not {@link com.framework.config.ConfigManager}
+     * - a plain {@code config/{env}.properties} default (present in every env file, since
+     * sequential mode needs one) must <em>not</em> narrow the pool the same way an explicit
+     * {@code -D} does, or pooled mode would silently drop a whole platform on every run instead
+     * of only when a run genuinely asked for one.
+     */
     private static List<MobileDeviceMatrix.Row> loadPoolDevices() {
+        String explicitPlatform = System.getProperty(ConfigKeys.MOBILE_PLATFORM);
+        String normalized = explicitPlatform == null ? null : explicitPlatform.trim().toLowerCase(Locale.ROOT);
         List<MobileDeviceMatrix.Row> devices = new ArrayList<>();
-        for (String id : MobileDeviceMatrix.androidList()) {
-            devices.add(MobileDeviceMatrix.loadDevice(id));
+        if (normalized == null || "android".equals(normalized)) {
+            for (String id : MobileDeviceMatrix.androidList()) {
+                devices.add(MobileDeviceMatrix.loadDevice(id));
+            }
         }
-        for (String id : MobileDeviceMatrix.iosList()) {
-            devices.add(MobileDeviceMatrix.loadDevice(id));
+        if (normalized == null || "ios".equals(normalized)) {
+            for (String id : MobileDeviceMatrix.iosList()) {
+                devices.add(MobileDeviceMatrix.loadDevice(id));
+            }
         }
         if (devices.isEmpty()) {
             throw new ConfigurationException(
-                    "'androidList' and 'iosList' in config/mobile-devices.json listed no devices between them.");
+                    "'androidList' and 'iosList' in config/mobile-devices.json listed no devices between them"
+                            + (normalized != null ? " for platform '" + normalized + "'" : "") + ".");
         }
         return devices;
     }

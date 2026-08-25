@@ -25,7 +25,7 @@ import java.util.List;
  *   },
  *   "androidList": ["android1"],
  *   "iosList": ["ios1"],
- *   "matrices": { "cross-platform": ["android1", "ios1"] },
+ *   "matrices": { "android": ["android1"], "ios": ["ios1"] },
  *   "ports": { "systemPort": { "start": 8200, "count": 50 } }
  * }
  * </pre>

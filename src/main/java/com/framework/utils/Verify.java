@@ -1,6 +1,7 @@
 package com.framework.utils;
 
 import com.aventstack.extentreports.Status;
+import com.framework.reporting.ApiReportRecorder;
 import com.framework.reporting.ExtentManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,11 @@ import java.util.Objects;
  * then failed" with no record of which check actually failed relative to the others, or that
  * every check before it had passed. This wraps each call so both reports get one explicit
  * PASS/FAIL step per assertion, in the same place it happened.</p>
+ *
+ * <p><b>Reports to exactly one destination, decided per call</b> - Extent for Web/Mobile
+ * (unchanged), or the API surface's own self-contained HTML report when an API test is
+ * currently active ({@link ApiReportRecorder#hasActiveTest()}) - never both. See {@link
+ * #run(String, String, String, Runnable)} and {@link ApiReportRecorder}'s javadoc.</p>
  *
  * <p><b>Delegates the actual comparison to {@code org.testng.Assert} unconditionally</b> -
  * this class never re-implements equality/null/array semantics itself, so a passing/failing
@@ -101,7 +107,7 @@ public final class Verify {
     }
 
     public static void assertEquals(Object actual, Object expected, String message) {
-        run(message, () -> Assert.assertEquals(actual, expected, message));
+        run(message, String.valueOf(expected), String.valueOf(actual), () -> Assert.assertEquals(actual, expected, message));
     }
 
     /** See the class javadoc's "int/Integer/long overloads" note - not redundant with the {@code Object} overload above. */
@@ -111,7 +117,7 @@ public final class Verify {
 
     /** See the class javadoc's "int/Integer/long overloads" note - not redundant with the {@code Object} overload above. */
     public static void assertEquals(long actual, long expected, String message) {
-        run(message, () -> Assert.assertEquals(actual, expected, message));
+        run(message, String.valueOf(expected), String.valueOf(actual), () -> Assert.assertEquals(actual, expected, message));
     }
 
     /** See the class javadoc's "int/Integer/long overloads" note - not redundant with {@link #assertEquals(long, long)}. */
@@ -121,7 +127,7 @@ public final class Verify {
 
     /** See the class javadoc's "int/Integer/long overloads" note - not redundant with {@link #assertEquals(long, long, String)}. */
     public static void assertEquals(int actual, int expected, String message) {
-        run(message, () -> Assert.assertEquals(actual, expected, message));
+        run(message, String.valueOf(expected), String.valueOf(actual), () -> Assert.assertEquals(actual, expected, message));
     }
 
     /** See the class javadoc's "int/Integer/long overloads" note - the shape a {@code ThreadLocal<Integer>.get()} paired with a raw {@code int} takes. */
@@ -131,7 +137,7 @@ public final class Verify {
 
     /** See the class javadoc's "int/Integer/long overloads" note - the shape a {@code ThreadLocal<Integer>.get()} paired with a raw {@code int} takes. */
     public static void assertEquals(Integer actual, int expected, String message) {
-        run(message, () -> Assert.assertEquals(actual, expected, message));
+        run(message, String.valueOf(expected), String.valueOf(actual), () -> Assert.assertEquals(actual, expected, message));
     }
 
     /** See the class javadoc's "int/Integer/long overloads" note - the mirror image of {@link #assertEquals(Integer, int)}. */
@@ -141,7 +147,7 @@ public final class Verify {
 
     /** See the class javadoc's "int/Integer/long overloads" note - the mirror image of {@link #assertEquals(Integer, int, String)}. */
     public static void assertEquals(int actual, Integer expected, String message) {
-        run(message, () -> Assert.assertEquals(actual, expected, message));
+        run(message, String.valueOf(expected), String.valueOf(actual), () -> Assert.assertEquals(actual, expected, message));
     }
 
     /** Shared by every {@code assertEquals} default-message overload above - see the class javadoc's asymmetric-message note. */
@@ -156,7 +162,7 @@ public final class Verify {
     }
 
     public static void assertNotNull(Object object, String message) {
-        run(message, () -> Assert.assertNotNull(object, message));
+        run(message, "not null", String.valueOf(object), () -> Assert.assertNotNull(object, message));
     }
 
     /**
@@ -182,20 +188,41 @@ public final class Verify {
 
     /**
      * Runs {@code assertion}, logging one PASS/FAIL step either way, then rethrows on failure -
-     * see class javadoc. A failure also gets its full stack trace logged as its own row
-     * ({@link ExtentManager#logStackTrace}) right where it happened, not just the one-line
-     * message - the message says what was expected; the trace says where in the call chain it
-     * actually broke.
+     * see class javadoc. Delegates to {@link #run(String, String, String, Runnable)} with no
+     * Expected/Actual pair (assertTrue/assertFalse have no natural one to show).
      */
     private static void run(String message, Runnable assertion) {
+        run(message, null, null, assertion);
+    }
+
+    /**
+     * Runs {@code assertion}, logging one PASS/FAIL step either way, then rethrows on failure -
+     * see class javadoc. Reports to exactly one destination, decided by whether an API test is
+     * currently active ({@link ApiReportRecorder#hasActiveTest()}) - the API surface's own
+     * self-contained HTML report if so (as a plain Expected/Actual pair when {@code expected}/
+     * {@code actual} are given, matching {@code ApiResponse#assertStatusCode}'s shape), Extent
+     * otherwise (Web/Mobile, unaffected - see {@link ApiReportRecorder}'s javadoc for why).
+     * A failure logged to Extent also gets its full stack trace logged as its own row ({@link
+     * ExtentManager#logStackTrace}) right where it happened, not just the one-line message - the
+     * message says what was expected; the trace says where in the call chain it actually broke.
+     */
+    private static void run(String message, String expected, String actual, Runnable assertion) {
         try {
             assertion.run();
             LOGGER.info("Assertion passed: {}", message);
-            ExtentManager.logAssertion(Status.PASS, message);
+            if (ApiReportRecorder.hasActiveTest()) {
+                ApiReportRecorder.logAssertion(message, true, expected, actual, null);
+            } else {
+                ExtentManager.logAssertion(Status.PASS, message);
+            }
         } catch (AssertionError e) {
             LOGGER.error("Assertion failed: {}", message, e);
-            ExtentManager.logAssertion(Status.FAIL, message);
-            ExtentManager.logStackTrace(e);
+            if (ApiReportRecorder.hasActiveTest()) {
+                ApiReportRecorder.logAssertion(message, false, expected, actual, e.getMessage());
+            } else {
+                ExtentManager.logAssertion(Status.FAIL, message);
+                ExtentManager.logStackTrace(e);
+            }
             throw e;
         }
     }

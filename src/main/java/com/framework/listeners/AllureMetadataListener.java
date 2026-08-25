@@ -77,6 +77,13 @@ public class AllureMetadataListener implements ISuiteListener, IInvokedMethodLis
             return;
         }
         List<String> groups = Arrays.asList(method.getTestMethod().getGroups());
+        if (groups.contains("api")) {
+            // API tests get their own self-contained HTML report instead (see
+            // ApiTestReportListener) and are deliberately excluded from Allure enrichment
+            // entirely - allure-testng's own native bare pass/fail capture still runs
+            // regardless (see ReportManager's javadoc), this only skips the added labels.
+            return;
+        }
 
         Allure.feature(featureFor(groups));
         Allure.story(TextUtils.humanize(method.getTestMethod().getMethodName()));

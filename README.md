@@ -96,7 +96,9 @@ src/main/java/com/framework/     <- core framework: generic, reusable, knows not
     listeners/      TestNG listeners (see table below)
     mobile/         BaseMobilePage, BaseMobileComponent, MobileActions, MobileUtils, MobileWaits
                     - base classes only; no concrete screen lives here.
-    reporting/      ExtentManager, ExtentLoggingAppender, AllureManager, ReportManager
+    reporting/      ExtentManager, ExtentLoggingAppender, AllureManager, ReportManager (Web/
+                    Mobile) - plus ApiReportRecorder/ApiReportModel/ApiHtmlReportRenderer, the
+                    API surface's own separate, dependency-free report (see Reporting below)
     secrets/        SecretManager, SensitiveDataMasker
     testdata/       TestDataManager (incl. getCaseData), TestData, TestCaseMetadata, TestCaseRecord,
                     JSON/YAML/CSV/Excel readers, PlaceholderResolver
@@ -176,12 +178,14 @@ scripts/            clean-local.sh — removes accumulated local run artifacts (
 |---|---|
 | `TestLoggingContextListener` | Tags every log line with `[ClassName.methodName]` via MDC |
 | `RetryAnalyzerTransformer` | Assigns `RetryAnalyzer` to every `@Test` |
+| `ConfigurationRetryListener` | Extends the same `retry.max.count` policy to `@BeforeMethod`/`@AfterMethod` — TestNG has no `retryAnalyzer` concept for configuration methods |
 | `ConfigParameterListener` | Bridges TestNG `<parameter>`s into `ConfigManager`, reset before every method |
 | `ApiContextListener` | Clears API/runtime context around every test |
 | `DriverCleanupListener` | Quits WebDriver/AppiumDriver after every test |
-| `ExtentReportingListener` | Creates/finalizes the Extent report node per test |
+| `ExtentReportingListener` | Creates/finalizes the Extent report node per test — skips API tests entirely (see Reporting) |
 | `ScreenshotCaptureListener` | Captures + attaches a failure screenshot to both reports |
 | `AllureParameterMaskingListener` | Masks every Allure "Parameters" entry (`@DataProvider` rows included) before `allure-testng` writes the result to disk — closes the `toString()`-bypasses-the-masker gap |
+| `ApiTestReportListener` | Starts/finalizes an API test's record on the separate `reports/api/` report (see Reporting) |
 | `BeforeMethodAlwaysRunListener` | Fails the suite at start-of-run if any `@BeforeMethod` has no `groups()` and no `alwaysRun = true` — turns the silent-skip-under-`-Dgroups=` footgun into a loud, actionable one |
 
 ## Setup
@@ -204,6 +208,17 @@ mvn clean compile
 # Mobile only, before -Dgroups=mobile: boot an emulator/simulator, then
 appium --base-path /wd/hub
 ```
+
+**Appium's `--base-path` must be `/wd/hub`**, matching `appium.server.url` in
+`config/{env}.properties` — Appium 2.x/3.x serves at the bare `/` root by default (no legacy
+prefix) unless told otherwise, and a mismatch here surfaces as `SessionNotCreatedException:
+... Response code 404` on every mobile test, not an obviously-Appium-related error. Before
+running the command above, check whether a server is already up rather than assuming it isn't:
+`curl -s http://127.0.0.1:4723/wd/hub/status` — a `200` with `"ready":true` means one's already
+running correctly and there's nothing to start. An `EADDRINUSE`/"address already in use" error
+from the command itself means the same thing (port 4723 already bound); only kill the existing
+process (`pkill -f 'appium --base-path'`) and restart if you actually need to (e.g. picked up a
+global Appium config change) — otherwise leave it running and go straight to `-Dgroups=mobile`.
 
 ## Configuration
 
@@ -275,7 +290,7 @@ appearing. `${{KEY}}` placeholders resolve the same values in test data:
 | Screenshots | `screenshot.mode` — `FAILURE` \| `EVERY_ACTION` \| `DISABLED` |
 | API timeouts | `api.connection.timeout`, `api.socket.timeout` (ms) |
 | Retry | `retry.max.count` (default 1; never retries `AssertionError`) |
-| Reporting | `report.overwrite` — `true` (default): every run replaces `reports/extent/index.html`. `false`: every run gets its own `reports/extent/report-{timestamp}.html`, so local runs stay side by side. `report.types` — comma-separated subset of `extent`\|`allure` (default `extent`), which report(s) this framework's own code enriches — see [Reporting](#reporting) |
+| Reporting | `report.overwrite` — `true` (default): every run replaces `reports/extent/index.html` and `reports/api/index.html`. `false`: every run gets its own `reports/extent/report-{timestamp}.html`/`reports/api/report-{timestamp}.html`, so local runs stay side by side. `report.types` — comma-separated subset of `extent`\|`allure` (default `extent`), which report(s) this framework's own code enriches for Web/Mobile — no effect on the API report, which is separate and always renders. `report.api.title`/`report.api.name` — optional branding for the API report only — see [Reporting](#reporting) |
 | Test data | `testdata.format` — `json` (default) \| `yaml` \| `csv` \| `excel`, see [Test data](#test-data) |
 | Mobile platform | `mobile.platform` — `android`/`ios`, picks a list in `config/mobile-devices.json` for a sequential run |
 | Mobile app | `mobile.app.path.android`, `mobile.app.path.ios` — which app binary each platform installs |
@@ -496,8 +511,8 @@ mvn test -Dgroups=mobile -Dtest=LoginTest#validCredentialsLogInAndShowHomeScreen
 mvn test -Dgroups=mobile -Dtest=LoginTest,EventsTest,EventBookingE2EFlowTest  # several classes
 mvn test -Dgroups=mobile -Dparallel=methods -DthreadCount=3           # pooled across every device (work queue)
 mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK ...    # real device / cloud farm, see BrowserStack
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachDeviceInTheMatrixConcurrently  # same test, every device at once
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachAndroidDeviceConcurrently     # same test, every Android device at once
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently      # same test, every iOS device at once
 mvn test -Denv=dev -Dgroups=mobile                                    # against dev instead of qa
 ```
 
@@ -529,7 +544,7 @@ emulator/simulator is used regardless of `-Denv`:
   },
   "androidList": ["android1"],
   "iosList": ["ios1", "ios2"],
-  "matrices": { "cross-platform": ["android1", "ios1"], "ios": ["ios1", "ios2"] },
+  "matrices": { "android": ["android1"], "ios": ["ios1", "ios2"] },
   "ports": { "systemPort": { "start": 8200, "count": 50 } }
 }
 ```
@@ -543,7 +558,11 @@ emulator/simulator is used regardless of `-Denv`:
   `androidList` + `iosList` combined as a work queue — whichever device finishes first picks
   up the next queued test, not "one device per thread regardless of load," and not "the same
   test on every device" (that's the `matrices` case below). Existing test classes
-  (`LoginTest`, `EventsTest`, ...) need no changes to participate.
+  (`LoginTest`, `EventsTest`, ...) need no changes to participate. Add an explicit
+  `-Dmobile.platform=ios` (or `android`) alongside `-Dparallel` to narrow the pool to just that
+  platform's list instead — e.g. `-Dmobile.platform=ios -Dparallel=methods -DthreadCount=2`
+  pools across `iosList` only, useful when no Android emulator/device happens to be available
+  for a given run. Omitting it keeps the combined-pool default.
 - **Which app binary** each platform installs is an environment/build concern, so it's in
   `config/{env}.properties`, not the JSON file: `mobile.app.path.android`,
   `mobile.app.path.ios` — one entry per platform, since every device on that platform runs the
@@ -663,12 +682,23 @@ BrowserStack capacity, since one local emulator only runs one session at a time.
 
 ## Reporting
 
+**API tests use a completely separate report from Web/Mobile** — `reports/api/index.html`, a
+self-contained, dependency-free HTML dashboard (no Extent, no Allure, no CDN/network access
+assumed) grouped by module (Authentication/Events/Bookings/Health & Config/End-to-End), one
+collapsible row per test with full request/response detail and Expected/Actual assertions - see
+[API Report](#api-report) below. Everything in this section past that is Web/Mobile only:
+`com.framework.api`/`com.framework.utils.Verify` never touch Extent or Allure for an API test
+(`ApiTestReportListener`/`ExtentReportingListener`/`AllureMetadataListener` all key off the
+`"api"` TestNG group to keep the two fully separate), and `report.types` below has no effect on
+the API report at all - it always renders, controlled only by `report.overwrite`.
+
 **Which report(s) get this framework's own enrichment is configurable** —
 `report.types` (default `extent`; `allure`, or `extent,allure` — see
-[Configuration](#configuration)). Extent, after the work below, is the fully-enriched,
-actively-used report; Allure is comparatively thin outside the API surface (no bridge for
-business-narrative log lines, no assertion detail - see its own bullet below) and its one real
-differentiator, cross-run trend/history dashboards, isn't wired up in this project's CI today.
+[Configuration](#configuration), Web/Mobile only - see the note above for API). Extent, after
+the work below, is the fully-enriched, actively-used report; Allure is comparatively thin (no
+bridge for business-narrative log lines, no assertion detail - see its own bullet below) and its
+one real differentiator, cross-run trend/history dashboards, isn't wired up in this project's CI
+today.
 Doing that enrichment work (masking, formatting, attaching) has a real cost even when nobody
 opens the result, so `report.types` lets a run skip it outright rather than do it and discard
 it - `ReportManager#isExtentEnabled`/`isAllureEnabled` gate every enrichment call site.
@@ -680,59 +710,38 @@ dependency entirely could do that) - `report.types=extent` only skips this frame
 
 - **Extent** (`reports/extent/index.html` by default, or a timestamped file per run if
   `report.overwrite=false` — see [Configuration](#configuration)) — every `logger.info(...)`
-  in the business-narrative layer (Web/Mobile Page Objects and Components, API Services)
-  mirrors into the report automatically via a Logback appender. The test title itself is a
-  humanized version of the method name (`BookingApiTest — Booking Without Auth Returns 401`,
-  not the raw `bookingWithoutAuthReturns401`) — see `ExtentReportingListener`.
-- **API request/response detail in Extent** — a step header (`POST /events`), the masked
-  request headers/body, and the response status/body, each rendered as its own scrollable,
-  whitespace-preserved code block (`ExtentManager.logCodeBlock`) rather than a squashed single
-  line. This is a deliberate *explicit* call from `ApiClient`, not the generic Logback mirror
-  above: Extent's Spark theme renders a log line inside a plain HTML `<td>` with no
-  `white-space: pre` of its own, so even an already pretty-printed multi-line body would still
-  collapse to one unreadable line if it went through the ordinary text-mirror path (verified
-  live against the generated report's own markup). `com.framework.api` is deliberately *not*
-  wired to the `EXTENT` Logback appender for this reason.
-  **Color-coded by status** — the response status line and body block render as a green badge
-  for 2xx, amber for 3xx, red for 4xx/5xx (`ExtentManager#logStatusLine`/`colorForStatus`), the
-  same at-a-glance signal as an `assertStatusCode` PASS/FAIL step, but shown for every call
-  regardless of whether the test goes on to assert anything about it. This (and every Pass/Fail
-  badge Extent renders natively) depends on a stylesheet the report's own HTML already loads
-  from a CDN — not a new dependency introduced here, and the report's actual content (the code
-  blocks above) never depends on it, only the color.
+  in the business-narrative layer (Web/Mobile Page Objects and Components) mirrors into the
+  report automatically via a Logback appender. The test title itself is a humanized version of
+  the method name (`LoginTest — Login With Invalid Password Fails`, not the raw
+  `loginWithInvalidPasswordFails`) — see `ExtentReportingListener`.
 - **Assertion detail in Extent/Allure** — every assertion logs its own PASS/FAIL step inline,
   where it happened, not just the test's final summary: `com.framework.utils.Verify` (a
   drop-in `org.testng.Assert.assertTrue`/`assertFalse`/`assertEquals`/`assertNotNull`
-  replacement — same signatures, swap the static import) for test-code assertions, and
-  `ApiResponse#assertStatusCode` (the most-called check in this codebase) does the same
-  directly. Neither changes assertion semantics — both still delegate to (or throw exactly
-  like) the real thing; they only add the missing report step around it.
+  replacement — same signatures, swap the static import) for Web/Mobile test-code assertions.
+  Neither changes assertion semantics — it still delegates to (or throws exactly like) the real
+  thing; it only adds the missing report step around it. For an API test, `Verify` and
+  `ApiResponse#assertStatusCode` report to the separate [API Report](#api-report) instead — see
+  that section, not this one.
 - **Allure** (`allure-results/`, raw JSON — `allure serve allure-results` to view), when
   `report.types` includes `allure`. With `allure` excluded, `allure-results/` still gets
   `allure-testng`'s own bare pass/fail entries (see above), just none of this:
   - **Steps** — the same business-narrative log lines Extent's bridge mirrors (Web/Mobile Page
-    Objects and Components, API Services) also reach Allure as steps (`AllureLoggingAppender`,
-    wired to the same loggers as `ExtentLoggingAppender`) - closes what used to be a documented
-    gap ("Allure has no bridge for arbitrary log lines"). Each API call gets its own richer,
-    explicit step instead (`ApiClient`/`Allure.step`), with everything below nested under it.
-  - **API** — HTTP method, resolved request URL, request/response headers, query/path params,
-    request/response body, response status code, response time (ms) - all masked, all attached
-    or added to the test's Parameters table automatically. (Known trade-off for a test making
-    several calls: `Allure.parameter(...)` is test-level, not step-scoped, so a later call's
-    HTTP Method/Request URL/Response Time overwrites an earlier call's entry there - the
-    request/response body/header *attachments* don't have this problem, they nest correctly
-    under whichever step made them, see `ApiClient#logRequest`'s own javadoc.)
+    Objects and Components) also reach Allure as steps (`AllureLoggingAppender`, wired to the
+    same loggers as `ExtentLoggingAppender`) - closes what used to be a documented gap ("Allure
+    has no bridge for arbitrary log lines"). API tests have no equivalent here - see the note at
+    the top of this section.
   - **Web** — screenshot, current URL, browser + version, and masked page source, all attached
     on failure (`ScreenshotCaptureListener`, same correctly-ordered "driver still alive" window
     the screenshot itself already relied on).
   - **Mobile** — screenshot, device name, platform + version, current activity (Android only -
     no iOS equivalent, best-effort), and masked page source, all attached on failure (same
     listener/window as Web).
-  - **Feature/Story/Severity/Platform labels** and an **Environment** widget
-    (`allure-results/environment.properties`) - all derived automatically from data this
-    framework already has (the `@Test(groups=...)` taxonomy, `ConfigManager`) - see
-    `AllureMetadataListener`. Retry grouping and parallel/timeline data are native to
-    `allure-testng` already; nothing extra was needed for either.
+  - **Feature/Story/Severity/Platform labels** (Web/Mobile only - `AllureMetadataListener`
+    skips API tests the same way `ExtentReportingListener` does, see the note at the top of this
+    section) and an **Environment** widget (`allure-results/environment.properties`, every run
+    regardless of surface) - all derived automatically from data this framework already has
+    (the `@Test(groups=...)` taxonomy, `ConfigManager`). Retry grouping and parallel/timeline
+    data are native to `allure-testng` already; nothing extra was needed for either.
 - **Test case metadata** — every `TestDataManager.getCaseData(...)` call (i.e. every test data
   load) logs its `testCaseId`/`testCaseName` (reaching Extent for free via the Logback bridge
   above) and attaches them as Allure parameters (`AllureManager.attachTestCaseMetadata`) - so a
@@ -740,7 +749,11 @@ dependency entirely could do that) - `report.types=extent` only skips this frame
   file/row), filterable/sortable in Allure, without a test author adding any reporting code.
 - **Screenshots** — `screenshot.mode` = `FAILURE` (default) | `EVERY_ACTION` | `DISABLED`.
 - **Retry** — `RetryAnalyzer` (`retry.max.count`, default 1) retries everything except
-  `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`.
+  `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`. The same
+  policy/limit also covers `@BeforeMethod`/`@AfterMethod` (`ConfigurationRetryListener`) - a
+  transient failure in per-test setup/teardown (e.g. an API test's login hitting a momentary
+  502) gets the same retry a `@Test` body would, instead of failing outright and skipping every
+  other `@Test` in that class.
 - **Coverage** — `mvn test` also runs Jacoco (`jacoco-maven-plugin`, bound to the `test` phase
   itself, not `verify`, so plain `mvn test` is enough): `target/site/jacoco/index.html` for a
   human-readable `com.framework.*` line-coverage report. Not gated - the `com.tests.base`
@@ -748,6 +761,41 @@ dependency entirely could do that) - `report.types=extent` only skips this frame
   coverage well below any threshold worth enforcing without a real suite behind it; the report
   is still generated for visibility. Re-add a `jacoco-check` execution with a calibrated minimum
   if framework-level self-tests come back.
+
+### API Report
+
+`reports/api/index.html` (or `reports/api/report-{timestamp}.html` if `report.overwrite=false`)
+- a self-contained, dependency-free HTML dashboard for the API surface only, matching the
+reporting structure of the standalone `RestAssuredTestNG` framework this was ported from.
+No Extent, no Allure, no third-party reporting library at all - everything (CSS/JS) is inlined,
+so the file opens standalone from disk or a CI artifact download with no network access
+assumed.
+
+- **Summary cards** — total/passed/failed/skipped test counts and total suite duration, plus a
+  perf strip (average response time, total API calls, slowest call).
+- **Grouped by module** — `Authentication`/`Bookings`/`Events`/`Health & Config`/`End-to-End`,
+  derived from the same `@Test(groups=...)` tags every API test already carries (`auth`/
+  `bookings`/`events`/`system`/`e2e`) - see `ApiTestReportListener`.
+- **One collapsible row per test** — pass/fail/skip icon, the humanized test title (same
+  convention as Extent's, `ExtentReportingListener`'s own javadoc), and either the single
+  call's method/endpoint/status/duration inline, or a call count for a multi-call test (e.g.
+  `EventBookingE2EFlowTest`'s create-event/book/verify/cleanup sequence) - expand for full
+  detail: masked request headers/body and response body per call (each in its own collapsible,
+  copyable code block), and every `Verify`/`ApiResponse#assertStatusCode` check made against it
+  as a plain Expected/Actual pair, not a technical assertion sentence.
+- **Search + tag filters** — filter by test name/endpoint text, or toggle any `@Test(groups=...)`
+  tag (`smoke`, `positive`, `negative`, ...) to narrow the visible rows - both client-side, no
+  server/build step involved.
+- **Status pills are display-only** — colored purely by HTTP status class (2xx green, 4xx amber,
+  5xx red) for at-a-glance reading; they are *not* the test's pass/fail signal. A test that
+  deliberately asserts a 400/404 is exactly as green as one asserting 200 - only the Validations
+  section and the row's own icon decide red vs. green.
+
+Branding (`report.api.title`/`report.api.name`, both optional - see `ConfigKeys`) and the
+overwrite behavior (`report.overwrite`, shared with Extent's) are the only configurable knobs;
+there is no equivalent of `report.types` here - the API report always renders when at least one
+API test ran this suite, and is skipped entirely (not written as an empty file) on a pure
+Web/Mobile run.
 
 ## CI/CD
 
@@ -766,10 +814,13 @@ preinstalled, not Edge/Safari, so those stay local/self-hosted-only for now. A m
 stays single-browser on purpose: it's normally someone deliberately targeting one specific
 combination, not asking for the full sweep.
 
-Every job archives `target/surefire-reports/`, `logs/`, `reports/extent/`, `allure-results/`,
-`target/screenshots/`, and `target/site/jacoco/` regardless of pass/fail (per-browser artifact
-names, since a matrix run can't share one name across its own legs). None of these jobs pass
-`-Dreport.types=...`, so they get the default (`extent` only, see [Reporting](#reporting)) -
+Every job archives `target/surefire-reports/`, `logs/`, `reports/extent/`, `reports/api/`,
+`allure-results/`, `target/screenshots/`, and `target/site/jacoco/` regardless of pass/fail
+(per-browser artifact names, since a matrix run can't share one name across its own legs).
+`reports/api/` only has content when the job's group filter actually included any API tests -
+the smoke/regression jobs above (`-DexcludedGroups=mobile`, no `api` exclusion) do include them.
+None of these jobs pass
+`-Dreport.types=...`, so Web/Mobile get the default (`extent` only, see [Reporting](#reporting)) -
 the archived `allure-results/` is `allure-testng`'s own bare native capture, not this
 framework's enrichment; add `-Dreport.types=extent,allure` to a job's command if a downstream
 Allure dashboard is ever wired up to consume these artifacts.
@@ -883,20 +934,20 @@ simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via ove
 
 | Symptom | Cause & fix |
 |---|---|
-| Mobile fails with `SessionNotCreated` | No emulator/Appium server running — start both, or exclude `mobile`. |
+| Mobile fails with `SessionNotCreated` | Two distinct causes, same exception type. **No emulator/Appium server running at all** — start both, or exclude `mobile`. **Server running but wrong base path** (message says `Response code 404`, not a connection failure) — Appium is up but not serving `/wd/hub` (its 2.x/3.x default is the bare `/` root); confirm with `curl http://127.0.0.1:4723/wd/hub/status` (should be `200`) and restart with `appium --base-path /wd/hub` if it isn't — see [Setup](#setup). |
 | `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag — see the [group taxonomy table](#running-tests) (`smoke`/`sanity`, `api`/`web`/`mobile`, `positive`/`negative`/`e2e`, `auth`/`events`/`bookings`/`system`). Check the printed test count. |
 | `@BeforeMethod` missing `alwaysRun = true` under `-Dgroups=X` | Can't happen silently any more — `BeforeMethodAlwaysRunListener` fails the suite at start-of-run with the exact `Class#method` if this is ever missing (see Listeners). |
 | A report shows secret values in plain text | Expected by default — masking is off unless enabled (see Secrets). Turn it on for a run you intend to share: `mvn test -Dmasking.enabled=true ...` (or `MASKING_ENABLED=true`). CI always masks regardless of this flag. |
-| Masking looks missing on a new log/report line despite `-Dmasking.enabled=true` | Shouldn't happen when masking is on — CONSOLE/FILE/Extent/Allure parameters all mask every line/value unconditionally once enabled (see Reporting). If it does, that line went through some other sink entirely (e.g. a raw `System.out.println`, or a custom appender bypassing `logback.xml`'s pattern), not a missed `.mask()` call. |
+| Masking looks missing on a new log/report line despite `-Dmasking.enabled=true` | Shouldn't happen when masking is on — CONSOLE/FILE/Extent/Allure parameters, and the API report, all mask every line/value unconditionally once enabled (see Reporting). If it does, that line went through some other sink entirely (e.g. a raw `System.out.println`, or a custom appender bypassing `logback.xml`'s pattern), not a missed `.mask()` call. |
 | Two masked values, want to know if they're the same secret | Compare the `********-xxxxxxxx` suffix — same secret always produces the same fingerprint. |
 | Web browser config looks wrong under `parallel="classes"` | `ConfigParameterListener` resets config before every invoked method — if this recurs, check nothing else caches a config value. |
 | `Log4j2 could not find a logging implementation` | Harmless — Apache POI's internal logger falling back to SimpleLogger. |
 | Selenium CDP version warnings | Harmless — Chrome's DevTools Protocol is newer than Selenium's bundled client. |
 | Want to rerun just what failed, not the whole run | `mvn -Dsurefire.suiteXmlFiles=target/surefire-reports/testng-failed.xml test` — see [Running tests](#running-tests). |
 
-**Where to look:** `logs/framework.log` (MDC-tagged per thread), `reports/extent/index.html`,
-`allure-results/` (`allure serve allure-results`), `target/screenshots/`,
-`target/surefire-reports/`.
+**Where to look:** `logs/framework.log` (MDC-tagged per thread), `reports/extent/index.html`
+(Web/Mobile), `reports/api/index.html` (API - see [API Report](#api-report)), `allure-results/`
+(`allure serve allure-results`), `target/screenshots/`, `target/surefire-reports/`.
 
 **Debug from an IDE:** any test class/method is a plain TestNG entity — right-click > Debug
 works directly. From the CLI: `mvn test -Dtest=... -Dmaven.surefire.debug`, then attach on

@@ -87,6 +87,7 @@ jobs:
             target/surefire-reports/
             logs/
             reports/extent/
+            reports/api/
             allure-results/
             target/screenshots/
             target/site/jacoco/
@@ -129,6 +130,7 @@ jobs:
             target/surefire-reports/
             logs/
             reports/extent/
+            reports/api/
             allure-results/
             target/screenshots/
             target/site/jacoco/
@@ -171,6 +173,7 @@ jobs:
             target/surefire-reports/
             logs/
             reports/extent/
+            reports/api/
             allure-results/
             target/screenshots/
             target/site/jacoco/

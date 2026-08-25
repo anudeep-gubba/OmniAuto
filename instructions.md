@@ -156,7 +156,13 @@ file installs on both a real device and an emulator).
 
 1. Boot an Android emulator (AVD) — e.g. `Pixel_10` (the device this suite is tuned against;
    see `config/mobile-devices.json`).
-2. Start Appium: `appium --base-path /wd/hub`
+2. Start Appium: `appium --base-path /wd/hub` — check first whether one's already running
+   (`curl -s http://127.0.0.1:4723/wd/hub/status`; a `200` with `"ready":true` means it's
+   already up, nothing to start). An `EADDRINUSE`/"address already in use" error from the
+   command above means exactly that — port 4723 is already bound to a running Appium server,
+   not a broken one. Only kill it (`pkill -f 'appium --base-path'`) if you actually need to
+   restart it (e.g. after changing global Appium config); otherwise just leave it running and
+   proceed straight to the test command.
 
 ```bash
 # Sequential, Android (the default platform - no extra flag needed)
@@ -197,7 +203,13 @@ config — confirmed live, the exact failure is `Simulator architecture is not s
 **Before any iOS command:**
 
 1. Boot an iOS Simulator — e.g. `iPhone 17 Pro` (see `config/mobile-devices.json`).
-2. Start Appium: `appium --base-path /wd/hub`
+2. Start Appium: `appium --base-path /wd/hub` — check first whether one's already running
+   (`curl -s http://127.0.0.1:4723/wd/hub/status`; a `200` with `"ready":true` means it's
+   already up, nothing to start). An `EADDRINUSE`/"address already in use" error from the
+   command above means exactly that — port 4723 is already bound to a running Appium server,
+   not a broken one. Only kill it (`pkill -f 'appium --base-path'`) if you actually need to
+   restart it (e.g. after changing global Appium config); otherwise just leave it running and
+   proceed straight to the test command.
 
 ```bash
 # Sequential, iOS - one flag, nothing else changes
@@ -235,9 +247,15 @@ Device details are **never** passed on the CLI for these — everything comes fr
 # picks up the next queued test; existing classes need no changes to participate)
 mvn test -Dgroups=mobile -Dparallel=methods -DthreadCount=3
 
-# The SAME test on every device in a named matrix, concurrently (not a work queue)
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachDeviceInTheMatrixConcurrently   # "cross-platform" matrix: 1 Android + 1 iOS
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently        # "ios" matrix: 2 iOS simulators at once
+# Same, but narrowed to one platform only (no cross-platform mixing) - add -Dmobile.platform
+# alongside -Dparallel to pool across just that platform's list
+mvn test -Dgroups=mobile -Dmobile.platform=android -Dparallel=methods -DthreadCount=2
+mvn test -Dgroups=mobile -Dmobile.platform=ios -Dparallel=methods -DthreadCount=2
+
+# The SAME test on every device in a named matrix, concurrently (not a work queue) - each
+# matrix is pure single-platform, never mixed
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachAndroidDeviceConcurrently   # "android" matrix: every Android device at once
+mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently    # "ios" matrix: 2 iOS simulators at once
 ```
 
 Add a device, a new matrix, or change which devices `androidList`/`iosList` point at, by
@@ -252,7 +270,7 @@ editing `config/mobile-devices.json` only — no code change:
   },
   "androidList": ["android1"],
   "iosList": ["ios1", "ios2"],
-  "matrices": { "cross-platform": ["android1", "ios1"], "ios": ["ios1", "ios2"] }
+  "matrices": { "android": ["android1"], "ios": ["ios1", "ios2"] }
 }
 ```
 
@@ -364,7 +382,7 @@ scripts/clean-local.sh --all    # + mvn clean (target/)
 
 | Symptom | Cause & fix |
 |---|---|
-| Mobile fails with `SessionNotCreated` | No emulator/Appium server running — start both, or exclude `mobile`. |
+| Mobile fails with `SessionNotCreated` | Two distinct causes, same exception type. **No emulator/Appium server running at all** — start both, or exclude `mobile`. **Server running but wrong base path** (message says `Response code 404`, not a connection failure) — Appium is up but not serving `/wd/hub` (its 2.x/3.x default is the bare `/` root); confirm with `curl http://127.0.0.1:4723/wd/hub/status` (should be `200`) and restart with `appium --base-path /wd/hub` if it isn't. |
 | `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag — see the taxonomy above (`smoke`/`sanity`, `api`/`web`/`mobile`, `positive`/`negative`/`e2e`, `auth`/`events`/`bookings`/`system`). Check the printed test count. |
 | iOS install fails with `Simulator architecture is not supported` | Wrong app binary — use `apps/eventhub-app-simulator.app`, not a real-device `.ipa`/`.app`. |
 | `@BeforeMethod` missing `alwaysRun = true` under `-Dgroups=X` | Can't happen silently any more — `BeforeMethodAlwaysRunListener` fails the suite at start-of-run with the exact `Class#method` if this is ever missing. |

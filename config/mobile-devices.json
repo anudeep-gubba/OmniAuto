@@ -9,7 +9,7 @@
   "iosList": ["ios1", "ios2"],
 
   "matrices": {
-    "cross-platform": ["android1", "ios1"],
+    "android": ["android1"],
     "ios": ["ios1", "ios2"]
   },
 

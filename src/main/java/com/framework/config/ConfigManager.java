@@ -123,6 +123,21 @@ public final class ConfigManager {
         return getString(ConfigKeys.API_BASE_URL);
     }
 
+    /** {@code true} (default) -&gt; every run replaces {@code reports/extent/index.html} and {@code reports/api/index.html}; {@code false} -&gt; each run writes its own timestamped file instead. See {@link ConfigKeys#REPORT_OVERWRITE}. */
+    public static boolean isReportOverwriteEnabled() {
+        return getBoolean(ConfigKeys.REPORT_OVERWRITE, true);
+    }
+
+    /** Branding for the API report only (reports/api/) - see {@link ConfigKeys#REPORT_API_TITLE}. */
+    public static String getApiReportTitle() {
+        return getString(ConfigKeys.REPORT_API_TITLE, "EventHub API Automation Report");
+    }
+
+    /** Branding for the API report only (reports/api/) - see {@link ConfigKeys#REPORT_API_NAME}. */
+    public static String getApiReportName() {
+        return getString(ConfigKeys.REPORT_API_NAME, "EventHub API Automation Framework");
+    }
+
     // ------------------------------------------------------------------
     // Thread-scoped write API (tiers 4 and 5)
     // ------------------------------------------------------------------
