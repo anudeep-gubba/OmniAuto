@@ -22,7 +22,7 @@ import org.openqa.selenium.By;
  * valid every few days regardless. So "negative login" here means the client-side form
  * validation Flutter itself enforces before ever calling the network (blank fields, a
  * malformed email) - the one thing that actually rejects input in this build - not a
- * server-rejected wrong password. See {@code com.tests.tests.mobile.LoginTest}.</p>
+ * server-rejected wrong password. See {@code com.tests.steps.mobile.LoginSteps}.</p>
  *
  * <p>{@link #EMAIL_INPUT}/{@link #PASSWORD_INPUT} locate by the field's own placeholder text
  * ("you@email.com" / the obscured "••••••"), which Flutter only exposes as the field's

@@ -6,7 +6,6 @@ import com.framework.driver.MobileDriverManager;
 import com.framework.driver.WebDriverManager;
 import com.framework.reporting.ExtentManager;
 import com.framework.secrets.SecretManager;
-import com.framework.utils.TextUtils;
 import org.testng.IInvokedMethod;
 import org.testng.IInvokedMethodListener;
 import org.testng.ITestContext;
@@ -61,16 +60,13 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
 
     @Override
     public void beforeInvocation(IInvokedMethod method, ITestResult testResult) {
-        if (!method.isTestMethod() || isApiTest(method)) {
+        if (!method.isTestMethod() || isApiTest(method, testResult)) {
             return;
         }
-        String className = method.getTestMethod().getRealClass().getSimpleName();
-        String methodName = method.getTestMethod().getMethodName();
-        // TextUtils.humanize() is only for the report title text - the method name itself is
-        // untouched, so -Dtest=Class#method selection, IDE navigation, and the console's
-        // [%X{test}] correlation tag (see logback.xml, deliberately left as the compact
-        // Class.method form for fast grep-ability) all keep working exactly as before.
-        String name = className + " — " + TextUtils.humanize(methodName);
+        // CucumberScenarioSupport.displayName() returns "<Feature> — <Scenario>" for a Cucumber
+        // scenario (every test today), or falls back to this project's original
+        // "<ClassName> — humanized method name" title for a plain TestNG test - see its javadoc.
+        String name = CucumberScenarioSupport.displayName(method.getTestMethod(), testResult);
         // Best-effort, not guaranteed: only shows up when @BeforeMethod already created the
         // driver before this @Test's own beforeInvocation fires (the common case - login/setup
         // usually happens in @BeforeMethod) - see assignRuntimeCategory's javadoc for the
@@ -98,14 +94,14 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
         if (test == null) {
             return;
         }
-        for (String group : method.getTestMethod().getGroups()) {
+        for (String group : CucumberScenarioSupport.groupsOrTags(method.getTestMethod(), testResult)) {
             test.assignCategory(group);
         }
     }
 
     @Override
     public void afterInvocation(IInvokedMethod method, ITestResult testResult) {
-        if (!method.isTestMethod() || isApiTest(method)) {
+        if (!method.isTestMethod() || isApiTest(method, testResult)) {
             return;
         }
         ExtentTest test = ExtentManager.getTest();
@@ -169,13 +165,8 @@ public class ExtentReportingListener implements IInvokedMethodListener, ITestLis
         ExtentManager.flush();
     }
 
-    /** {@code true} for every API test ({@code "api"} TestNG group - see {@link ApiTestReportListener}'s javadoc) - those get their own self-contained HTML report instead and are deliberately excluded from Extent entirely, not just left detail-free. */
-    private static boolean isApiTest(IInvokedMethod method) {
-        for (String group : method.getTestMethod().getGroups()) {
-            if ("api".equals(group)) {
-                return true;
-            }
-        }
-        return false;
+    /** {@code true} for every API test ({@code "api"}/{@code @api} tag - see {@link ApiTestReportListener}'s javadoc) - those get their own self-contained HTML report instead and are deliberately excluded from Extent entirely, not just left detail-free. */
+    private static boolean isApiTest(IInvokedMethod method, ITestResult testResult) {
+        return CucumberScenarioSupport.groupsOrTags(method.getTestMethod(), testResult).contains("api");
     }
 }

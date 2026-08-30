@@ -18,6 +18,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 /**
  * Owns the single {@link ExtentReports} instance for the whole run and the current thread's
@@ -26,13 +28,30 @@ import java.time.format.DateTimeFormatter;
  * <p><b>Thread-safety classification (requirement.md &sect;21):</b> {@link #EXTENT} is a
  * <b>thread-safe singleton</b> (category 2) - {@code ExtentReports.createTest}/{@code flush}
  * are safe to call concurrently, the documented and widely-used pattern for TestNG parallel
- * execution. {@link #CURRENT_TEST} is <b>thread-local</b> (category 3): each thread only ever
- * logs into its own current test node, never another thread's.</p>
+ * execution. {@link #NODE_STACK} is <b>thread-local</b> (category 3): each thread only ever
+ * logs into its own current node, never another thread's.</p>
  *
  * <p>Report node lifecycle is owned by {@link ExtentReportingListener}, scoped to each
  * {@code @Test} method's own invocation - see that class's javadoc for why
  * {@code @BeforeMethod}/{@code @AfterMethod} steps are not captured here (Allure's own
  * TestNG integration captures those natively instead).</p>
+ *
+ * <p><b>Gherkin/BDD step nodes:</b> {@link #getTest()} returns whichever node is "current" for
+ * the calling thread right now - the scenario-level root node started by {@link #startTest}, or,
+ * while a Gherkin step is executing, the child step node pushed by {@link #startStep}. This is
+ * what makes every existing call site ({@code com.framework.utils.Verify}, {@link
+ * ExtentLoggingAppender}, {@code ApiClient}'s request/response logging - all written before this
+ * class had any notion of a "step") automatically nest its logging under the right
+ * Given/When/Then node with zero changes of its own: they were always calling {@code getTest()}
+ * and logging into whatever it returned - only what it returns changed. {@link #NODE_STACK} is a
+ * stack, not a single reference, so a step's own node can be pushed on top of the scenario root
+ * and popped back off again once that step finishes ({@code
+ * com.framework.listeners.CucumberExtentStepListener} is what calls {@link #startStep}/{@link
+ * #endStep}, driven by Cucumber's own {@code TestStepStarted}/{@code TestStepFinished} events) -
+ * Cucumber steps run strictly one at a time within a single scenario/thread, so there is never
+ * more than one step node active per thread, but the stack shape stays honest even so: {@link
+ * #endStep} refuses to pop the root scenario node itself (leaves it in place) if called with no
+ * step actually pushed, rather than silently detaching the scenario's own node.</p>
  *
  * <p><b>{@link ReportManager#isExtentEnabled()} gates everything here</b> - when {@code false}
  * ({@link com.framework.constants.ConfigKeys#REPORT_TYPES} excludes {@code "extent"}), {@link
@@ -51,29 +70,71 @@ public final class ExtentManager {
     private static final Path REPORT_PATH = resolveReportPath();
 
     private static final ExtentReports EXTENT = ReportManager.isExtentEnabled() ? initExtent() : null;
-    private static final ThreadLocal<ExtentTest> CURRENT_TEST = new ThreadLocal<>();
+    private static final ThreadLocal<Deque<ExtentTest>> NODE_STACK = ThreadLocal.withInitial(ArrayDeque::new);
 
     private ExtentManager() {
     }
 
-    /** Starts a new report node for the calling thread and makes it the current test - a no-op returning {@code null} if Extent is disabled (see class javadoc). */
+    /** Starts a new scenario-level report node for the calling thread and makes it the current node - a no-op returning {@code null} if Extent is disabled (see class javadoc). */
     public static ExtentTest startTest(String name) {
         if (EXTENT == null) {
             return null;
         }
         ExtentTest test = EXTENT.createTest(name);
-        CURRENT_TEST.set(test);
+        Deque<ExtentTest> stack = NODE_STACK.get();
+        stack.clear();
+        stack.push(test);
         return test;
     }
 
-    /** The calling thread's active report node, or {@code null} if none is active right now (or Extent is disabled). */
+    /** The calling thread's current node - the scenario root, or a Gherkin step's own node while one is active (see class javadoc) - or {@code null} if none is active right now (or Extent is disabled). */
     public static ExtentTest getTest() {
-        return CURRENT_TEST.get();
+        return NODE_STACK.get().peek();
     }
 
-    /** Detaches the calling thread's current test node. Does not remove it from the report. */
+    /** Detaches the calling thread's current node (and any step node still on top of it). Does not remove anything from the report. */
     public static void endTest() {
-        CURRENT_TEST.remove();
+        NODE_STACK.remove();
+    }
+
+    /**
+     * Starts a Gherkin step node ({@code keyword} - "Given"/"When"/"Then"/"And"/"But"/"*") as a
+     * child of the calling thread's current node, and makes it the new current node so every log
+     * line/assertion made while this step runs nests under it instead of the bare scenario root
+     * - see class javadoc. No-op returning {@code null} if Extent is disabled or no scenario
+     * node is active yet (e.g. a step somehow running outside {@link ExtentReportingListener}'s
+     * node lifecycle).
+     *
+     * <p><b>{@code keyword} is prepended as plain text, not passed through Extent's own {@link
+     * com.aventstack.extentreports.GherkinKeyword}.</b> Audit finding, verified live with a
+     * standalone {@code ExtentSparkReporter} run outside this codebase entirely: a node created
+     * via {@code createNode(new GherkinKeyword("Given"), text)} renders byte-for-byte identical
+     * HTML to a plain {@code createNode(text)} node in ExtentReports 5.1.2's Spark theme - no
+     * icon, no keyword prefix, no distinguishing class or attribute anywhere in the output. The
+     * class exists and resolves without error; the Spark reporter's own HTML template simply
+     * never reads it. Prepending the keyword ourselves is the only way this project found to
+     * actually get "Given ..."/"When ..."/"Then ..." to show up in the rendered report.</p>
+     */
+    public static ExtentTest startStep(String keyword, String text) {
+        ExtentTest parent = getTest();
+        if (parent == null) {
+            return null;
+        }
+        ExtentTest step = parent.createNode(keyword + " " + text);
+        NODE_STACK.get().push(step);
+        return step;
+    }
+
+    /**
+     * Ends the calling thread's current Gherkin step node, popping back to its parent scenario
+     * node. Refuses to pop the scenario root itself (a no-op instead) if called with no step
+     * actually active - see class javadoc.
+     */
+    public static void endStep() {
+        Deque<ExtentTest> stack = NODE_STACK.get();
+        if (stack.size() > 1) {
+            stack.pop();
+        }
     }
 
     /** Writes the accumulated report to disk. Safe to call more than once (e.g. per {@code <test>} tag), and a no-op if Extent is disabled. */

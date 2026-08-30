@@ -1,7 +1,6 @@
 package com.framework.listeners;
 
 import com.framework.reporting.ApiReportRecorder;
-import com.framework.utils.TextUtils;
 import org.testng.ISuite;
 import org.testng.ISuiteListener;
 import org.testng.ITestContext;
@@ -26,15 +25,12 @@ import java.util.Set;
  * ran: call, then the checks made against it. This listener only owns the record's start/end
  * and the module a test belongs to.</p>
  *
- * <p><b>"Is this an API test?" is decided by the {@code "api"} TestNG group</b>, not by the
- * test class extending a common API base class: every method across every API test class
- * ({@code AuthApiTest}, {@code BookingApiTest}, {@code EventApiTest}, {@code SystemApiTest},
- * {@code EventBookingE2EFlowTest} - verified live, all five) already carries it, and unlike a
- * base-class check this needs no compile-time dependency from this class (which lives in {@code
- * src/main/java}, compiled before {@code src/test/java}) on the application's test-scoped base
- * classes. {@code SystemApiTest} in particular has no shared API base class at all (it needs no
- * login/teardown), so a base-class check would have missed it entirely - the group tag doesn't
- * have that gap.</p>
+ * <p><b>"Is this an API test?" is decided by the {@code @api} Gherkin tag</b> (via
+ * {@link CucumberScenarioSupport#groupsOrTags}, itself the {@code "api"} TestNG group for a
+ * plain TestNG test), not by the step-definition class extending a common API base: every
+ * {@code features/api/**} scenario carries it, and this needs no compile-time dependency from
+ * this class (which lives in {@code src/main/java}, compiled before {@code src/test/java}) on
+ * any test-scoped step-definition/context class.</p>
  *
  * <p>Self-registers via {@code META-INF/services/org.testng.ITestNGListener} - no
  * {@code testng.xml} or {@code @Listeners} annotation needed anywhere.</p>
@@ -60,10 +56,13 @@ public class ApiTestReportListener implements ITestListener, ISuiteListener {
         if (!isApiTest(result)) {
             return;
         }
-        List<String> groups = List.of(result.getMethod().getGroups());
-        String description = result.getMethod().getDescription();
-        String name = result.getTestClass().getRealClass().getSimpleName() + " — "
-                + TextUtils.humanize(result.getMethod().getMethodName());
+        List<String> groups = CucumberScenarioSupport.groupsOrTags(result.getMethod(), result);
+        // For a Cucumber scenario, result.getMethod().getDescription() is cucumber-testng's own
+        // generic "Runs Cucumber Scenarios" @Test(description=...) on runScenario() - not
+        // anything scenario-specific - so it's blanked out here rather than shown on every row.
+        String description = CucumberScenarioSupport.isCucumberScenario(result.getMethod())
+                ? "" : result.getMethod().getDescription();
+        String name = CucumberScenarioSupport.displayName(result.getMethod(), result);
         ApiReportRecorder.startTest(name, description == null ? "" : description, groups, moduleFor(groups));
     }
 
@@ -108,12 +107,7 @@ public class ApiTestReportListener implements ITestListener, ISuiteListener {
     }
 
     private static boolean isApiTest(ITestResult result) {
-        for (String group : result.getMethod().getGroups()) {
-            if (API_GROUP.equals(group)) {
-                return true;
-            }
-        }
-        return false;
+        return CucumberScenarioSupport.groupsOrTags(result.getMethod(), result).contains(API_GROUP);
     }
 
     private static String moduleFor(List<String> groups) {

@@ -1,15 +1,15 @@
 package com.tests.application.testdata.api;
 
-import com.tests.tests.api.AuthApiTest;
-import com.tests.tests.api.EventApiTest;
-import com.tests.tests.api.EventBookingE2EFlowTest;
+import com.tests.steps.api.AuthSteps;
+import com.tests.steps.api.EventSteps;
+import com.tests.steps.api.BookingE2EFlowSteps;
 import com.framework.testdata.TestCaseMetadata;
 import com.framework.testdata.TestCaseRecord;
 
 /**
  * One row of {@code testdata/json/api/api.json} feeding an {@code /auth/*} case in
- * {@link AuthApiTest} (and the odd auth step inside {@link EventApiTest}/{@link
- * EventBookingE2EFlowTest} that registers its own throwaway account). Splits {@code metadata}
+ * {@link AuthSteps} (and the odd auth step inside {@link EventSteps}/{@link
+ * BookingE2EFlowSteps} that registers its own throwaway account). Splits {@code metadata}
  * ({@link TestCaseMetadata}) from the actual {@code data} ({@link AuthApiData}), matching the
  * JSON's own shape - see {@link com.tests.application.testdata.LoginTestCase} for the identical
  * shared-shape convention (there, one record spans Web and Mobile since their login shape is

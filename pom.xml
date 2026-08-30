@@ -27,6 +27,12 @@
         <appium.version>9.3.0</appium.version>
         <rest-assured.version>5.5.0</rest-assured.version>
 
+        <!-- BDD: every test is a Gherkin scenario, driven through TestNG (cucumber-testng), not
+             a separate JUnit/Cucumber engine - see omni-framework.md / the Cucumber migration
+             plan for why: it keeps RetryAnalyzer, the Extent/Allure/API listeners, and
+             -Dparallel/-DthreadCount all working unchanged. -->
+        <cucumber.version>7.20.1</cucumber.version>
+
         <!-- Logging -->
         <slf4j.version>2.0.16</slf4j.version>
         <logback.version>1.5.8</logback.version>
@@ -110,6 +116,41 @@
             <artifactId>json-schema-validator</artifactId>
             <version>${rest-assured.version}</version>
         </dependency>
+
+        <!-- ============ BDD: Cucumber ============ -->
+        <!-- Compile scope (like testng above), not test-scoped: com.framework.listeners'
+             CucumberScenarioSupport (src/main/java) reads PickleWrapper/AbstractTestNGCucumberTests
+             directly, so both main and test code need these on the compile classpath. Runs
+             scenarios as ordinary TestNG @Test invocations (AbstractTestNGCucumberTests), so
+             every existing TestNG-native listener/retry/parallel mechanism keeps working as-is. -->
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-testng</artifactId>
+            <version>${cucumber.version}</version>
+        </dependency>
+        <!-- Step definitions/hooks (src/test/java only). -->
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-java</artifactId>
+            <version>${cucumber.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Zero-config dependency injection: lets a scenario's step-definition classes and its
+             Hooks class share one instance of scenario state (e.g. ApiScenarioContext) - the
+             Cucumber-idiomatic replacement for the old inheritance-based Base*Test classes. -->
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-picocontainer</artifactId>
+            <version>${cucumber.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Deliberately NOT adding allure-cucumber7-jvm alongside the existing allure-testng:
+             both would independently capture the very same runScenario invocation as their own
+             separate Allure result (allure-testng via its TestNG listener, allure-cucumber7-jvm
+             via Cucumber's own plugin/event-bus hook), producing two entries per scenario in one
+             report. allure-testng's existing capture is kept as the single source of truth;
+             CucumberScenarioSupport (below) is what makes its label/name correct for a Cucumber
+             scenario instead of the old two-adapter approach the original plan considered. -->
 
         <!-- ============ Logging ============ -->
         <dependency>

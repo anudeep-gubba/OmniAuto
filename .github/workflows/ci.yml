@@ -1,17 +1,24 @@
 name: CI
 
 # Phase 13 (requirement.md section 26): command-line-driven, the same shape as
-# requirement.md's own `mvn clean test -Denv=qa -Dgroups=regression -Dbrowser=chrome
-# -Dheadless=true` example - nothing here is CI-specific framework behavior, it's the same
-# flags any engineer already runs locally (see README.md's "CI/CD" section).
+# requirement.md's own `mvn clean test -Denv=qa -Dcucumber.filter.tags="@regression"
+# -Dbrowser=chrome -Dheadless=true` example - nothing here is CI-specific framework behavior,
+# it's the same flags any engineer already runs locally (see README.md's "CI/CD" section).
 #
-# Note: "regression" in that example is illustrative, not a group this repo's tests are
-# actually tagged with (verified live, not assumed - see README.md's "found in practice"
-# note under CI/CD). The full run below leaves -Dgroups empty (every group) rather than
-# filtering to a group name that would silently match zero tests and report a false-green
-# build.
+# Every scenario is Cucumber/Gherkin now (see README.md's "BDD / Cucumber" notes); scenario
+# selection is entirely -Dcucumber.filter.tags (a Cucumber tag expression), read automatically
+# by cucumber-testng - the old -Dgroups/-DexcludedGroups TestNG flags no longer select anything
+# scenario-scoped, since every scenario physically runs through one shared TestNG method
+# (see com.framework.listeners.CucumberScenarioSupport's javadoc).
 #
-# Mobile is excluded (no emulator/Appium on a hosted runner).
+# Note: "@regression" in that example is illustrative, not a tag this repo's scenarios are
+# actually tagged with (verified live, not assumed - see README.md's "found in practice" note
+# under CI/CD). The full run below leaves -Dcucumber.filter.tags as just "not @mobile" (every
+# tag) rather than filtering to a tag nothing carries, which would silently match zero
+# scenarios and report a false-green build.
+#
+# Mobile is excluded (no emulator/Appium on a hosted runner) via "not @mobile" in every tag
+# expression below.
 #
 # Audit finding fix: this used to run exactly one browser per job (a fixed 'chrome' default,
 # or whatever single value a manual dispatch passed) despite the framework supporting four -
@@ -30,8 +37,8 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      groups:
-        description: "TestNG groups to run (-Dgroups=...); leave blank to run every group"
+      tags:
+        description: "Cucumber tag expression to run (-Dcucumber.filter.tags=...), e.g. \"@smoke and @api\"; leave blank to run every tag"
         required: false
         default: ""
       browser:
@@ -75,8 +82,7 @@ jobs:
       - name: Run smoke tests
         run: >
           mvn -B clean test
-          -Denv=qa -Dgroups=smoke -Dbrowser=${{ matrix.browser }} -Dheadless=true
-          -DexcludedGroups=mobile
+          -Denv=qa -Dcucumber.filter.tags="@smoke and not @mobile" -Dbrowser=${{ matrix.browser }} -Dheadless=true
 
       - name: Upload test artifacts
         if: always()
@@ -113,13 +119,13 @@ jobs:
           cache: maven
 
       - name: Run regression suite
-        # -Dgroups is intentionally left blank - a push-to-main run is always "every group",
-        # never filtered; a nonexistent group name like the requirement doc's illustrative
-        # "regression" would instead silently run zero tests and still report success.
+        # -Dcucumber.filter.tags is intentionally just "not @mobile" - a push-to-main run is
+        # always "every tag" (mobile aside), never filtered further; a nonexistent tag like the
+        # requirement doc's illustrative "@regression" would instead silently match zero
+        # scenarios and still report success.
         run: >
           mvn -B clean test
-          -Denv=qa -Dgroups= -Dbrowser=${{ matrix.browser }} -Dheadless=true
-          -DexcludedGroups=mobile
+          -Denv=qa -Dcucumber.filter.tags="not @mobile" -Dbrowser=${{ matrix.browser }} -Dheadless=true
 
       - name: Upload test artifacts
         if: always()
@@ -152,17 +158,18 @@ jobs:
           cache: maven
 
       - name: Run regression suite
-        # A manual dispatch honors whatever single browser/env/groups the person running it
-        # chose (defaults: qa/chrome/every group) - deliberately not the push job's [chrome,
-        # firefox] matrix, since a manual trigger is normally someone targeting one specific
-        # combination on purpose, not asking for the full cross-browser sweep.
+        # A manual dispatch honors whatever single browser/env/tags the person running it chose
+        # (defaults: qa/chrome/every tag) - deliberately not the push job's [chrome, firefox]
+        # matrix, since a manual trigger is normally someone targeting one specific combination
+        # on purpose, not asking for the full cross-browser sweep. Mobile is always excluded
+        # (no emulator/Appium on this runner) by ANDing "not @mobile" onto whatever tag
+        # expression was given, rather than letting a manual run accidentally include it.
         run: >
           mvn -B clean test
           -Denv=${{ github.event.inputs.env || 'qa' }}
-          -Dgroups=${{ github.event.inputs.groups }}
+          -Dcucumber.filter.tags="${{ github.event.inputs.tags != '' && format('({0}) and not @mobile', github.event.inputs.tags) || 'not @mobile' }}"
           -Dbrowser=${{ github.event.inputs.browser || 'chrome' }}
           -Dheadless=true
-          -DexcludedGroups=mobile
 
       - name: Upload test artifacts
         if: always()

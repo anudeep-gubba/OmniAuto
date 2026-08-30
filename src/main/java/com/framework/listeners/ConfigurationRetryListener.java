@@ -10,12 +10,29 @@ import org.testng.ITestNGMethod;
 import org.testng.ITestResult;
 
 /**
- * Extends {@code retry.max.count} (requirement.md &sect;23) to {@code @BeforeMethod}/
+ * <p><b>Currently inert, left registered rather than deleted - read this before assuming it's
+ * still protecting anything.</b> Since the Cucumber/BDD migration, {@code com.tests} has zero
+ * plain TestNG {@code @BeforeMethod}/{@code @AfterMethod} methods anywhere: every per-scenario
+ * setup/teardown is now a Cucumber {@code @Before}/{@code @After} hook
+ * ({@code com.tests.hooks.*}), which runs as an ordinary method call <em>inside</em> the single
+ * {@code runScenario} {@code @Test} invocation, not as a separate TestNG configuration-method
+ * invocation - so {@link ITestNGMethod#isBeforeMethodConfiguration()}/
+ * {@code isAfterMethodConfiguration()} never return {@code true} for anything in this suite
+ * today, and the retry loop below never actually gets to retry anything in isolation. A
+ * transient failure inside a Cucumber hook (e.g. {@code ApiHooks}' teardown hitting a momentary
+ * 502) is only retried as part of {@link RetryAnalyzer}'s coarser whole-scenario retry on
+ * {@code runScenario} itself - re-running the scenario's steps too, not just the failed hook.
+ * Kept registered rather than removed because it is genuinely zero-cost while inert (one cheap
+ * boolean check per configuration-method invocation, of which there are currently none) and
+ * would immediately matter again the moment any test-scoped class anywhere adds a real
+ * {@code @BeforeMethod}/{@code @AfterMethod} of its own.</p>
+ *
+ * <p>Extends {@code retry.max.count} (requirement.md &sect;23) to {@code @BeforeMethod}/
  * {@code @AfterMethod} - {@link RetryAnalyzer} only ever covers {@code @Test} methods (TestNG
  * has no {@code retryAnalyzer} concept for configuration methods at all, unlike {@code @Test}),
  * so a transient failure in a per-test setup/teardown step (e.g. an API test's seeded-account
  * login hitting a momentary 502 from the target server) previously failed outright with no
- * retry, unlike the exact same transient failure inside a {@code @Test} body.
+ * retry, unlike the exact same transient failure inside a {@code @Test} body.</p>
  *
  * <p><b>Found in practice, not assumed:</b> an 8-thread `-Dparallel=methods` run against the
  * live EventHub sandbox hit a `502 Proxy Error` twice mid-{@code @Test} (retried successfully

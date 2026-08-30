@@ -3,7 +3,6 @@ package com.framework.listeners;
 import com.framework.config.ConfigManager;
 import com.framework.constants.ConfigKeys;
 import com.framework.reporting.ReportManager;
-import com.framework.utils.TextUtils;
 import io.qameta.allure.Allure;
 import io.qameta.allure.SeverityLevel;
 import org.slf4j.Logger;
@@ -18,7 +17,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,13 +33,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     mobile platform/app path. Written once per suite, guarded by {@link #ENVIRONMENT_WRITTEN}
  *     since {@code ISuiteListener.onStart} can fire more than once in a multi-suite run.</li>
  *     <li><b>Feature/Story/Severity/Platform labels</b> ({@link #beforeInvocation}) - derived
- *     from the same {@code @Test(groups = ...)} tags already on every test (see README's
- *     "Running tests" group taxonomy table): Feature = the resource tag (Auth/Events/Bookings/
- *     System) if present, else the surface; Story = the humanized method name ({@link
- *     TextUtils#humanize}, the same phrase Extent's own title uses); Severity = {@code sanity}
- *     -&gt; blocker, {@code smoke}/{@code e2e} -&gt; critical, else normal; Platform = the raw
- *     surface tag (web/mobile/api), a plain custom label since Allure has no built-in concept
- *     matching it.</li>
+ *     from the same Gherkin tags every scenario carries (via {@link CucumberScenarioSupport},
+ *     see README's "Running tests" tag taxonomy table): Feature = the resource tag (Auth/Events/
+ *     Bookings/System) if present, else the surface; Story = the bare Gherkin scenario name
+ *     ({@link CucumberScenarioSupport#scenarioName} - deliberately not
+ *     {@link CucumberScenarioSupport#displayName}'s feature-qualified version Extent/API use,
+ *     since Allure already has its own Feature label right above, immediately to the left);
+ *     Severity = {@code sanity} -&gt; blocker, {@code smoke}/{@code e2e} -&gt; critical, else
+ *     normal; Platform = the raw surface tag (web/mobile/api), a plain custom label since Allure
+ *     has no built-in concept matching it.</li>
  * </ul>
  *
  * <p><b>Not implemented here because they're already native, verified live against a real
@@ -76,7 +76,7 @@ public class AllureMetadataListener implements ISuiteListener, IInvokedMethodLis
         if (!method.isTestMethod() || !ReportManager.isAllureEnabled()) {
             return;
         }
-        List<String> groups = Arrays.asList(method.getTestMethod().getGroups());
+        List<String> groups = CucumberScenarioSupport.groupsOrTags(method.getTestMethod(), testResult);
         if (groups.contains("api")) {
             // API tests get their own self-contained HTML report instead (see
             // ApiTestReportListener) and are deliberately excluded from Allure enrichment
@@ -86,7 +86,11 @@ public class AllureMetadataListener implements ISuiteListener, IInvokedMethodLis
         }
 
         Allure.feature(featureFor(groups));
-        Allure.story(TextUtils.humanize(method.getTestMethod().getMethodName()));
+        // scenarioName() is the bare Gherkin scenario name for a Cucumber scenario (every test
+        // today - Allure already has its own Feature label above, so no feature-qualified
+        // prefix is wanted here, unlike Extent/API's displayName()), or this project's original
+        // humanized-method-name fallback for a plain TestNG test.
+        Allure.story(CucumberScenarioSupport.scenarioName(method.getTestMethod(), testResult));
         Allure.label("severity", severityFor(groups).value());
         surfaceOf(groups).ifPresent(surface -> Allure.label("platform", surface));
     }

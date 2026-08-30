@@ -25,7 +25,6 @@ import java.util.List;
  *   },
  *   "androidList": ["android1"],
  *   "iosList": ["ios1"],
- *   "matrices": { "android": ["android1"], "ios": ["ios1"] },
  *   "ports": { "systemPort": { "start": 8200, "count": 50 } }
  * }
  * </pre>
@@ -53,8 +52,6 @@ import java.util.List;
  *     (non {@code -Dparallel}) mobile run uses {@code mobile.platform} to pick one of these
  *     and takes its first id (see {@link DriverFactory}); a {@code -Dparallel} run draws from
  *     both combined as a work queue (see {@link MobileDevicePool}).</li>
- *     <li>{@code matrices} - named lists of ids for "run the same test on every device at
- *     once" ({@code MultiDeviceParallelTest}), not a work queue.</li>
  * </ul>
  */
 public final class MobileDeviceMatrix {
@@ -121,31 +118,6 @@ public final class MobileDeviceMatrix {
     /** Every id in {@code iosList}, in declared order. */
     public static List<String> iosList() {
         return idsAt("iosList");
-    }
-
-    /** Every device in {@code matrices.<matrixName>}, resolved, in declared order. */
-    public static List<Row> load(String matrixName) {
-        JsonNode ids = root().path("matrices").path(matrixName);
-        if (!ids.isArray() || ids.isEmpty()) {
-            throw new ConfigurationException(
-                    "No matrix '" + matrixName + "' (or it lists no devices) under 'matrices' in '"
-                            + RESOURCE_PATH + "'.");
-        }
-        List<Row> rows = new ArrayList<>();
-        for (JsonNode idNode : ids) {
-            rows.add(loadDevice(idNode.asText()));
-        }
-        return rows;
-    }
-
-    /** {@link #load(String)}, packaged as a TestNG {@code @DataProvider} row set (one {@link Row} argument each). */
-    public static Object[][] dataProvider(String matrixName) {
-        List<Row> rows = load(matrixName);
-        Object[][] result = new Object[rows.size()][1];
-        for (int i = 0; i < rows.size(); i++) {
-            result[i][0] = rows.get(i);
-        }
-        return result;
     }
 
     private static String appPathForPlatform(String platform) {

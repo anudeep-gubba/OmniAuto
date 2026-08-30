@@ -38,7 +38,7 @@ public class LoginPage extends BasePage {
      * Clicks Sign In. Deliberately returns {@code void}, not the next page: a
      * failed login (wrong credentials) does not navigate anywhere, so
      * assuming success here would hand back a page object for a page that
-     * never loaded. See {@link com.tests.tests.web.LoginTest} for how the two
+     * never loaded. See {@link com.tests.steps.web.LoginSteps} for how the two
      * outcomes are asserted independently.
      */
     public void clickLogin() {

@@ -1,13 +1,13 @@
 package com.tests.application.testdata.api;
 
-import com.tests.tests.api.BookingApiTest;
-import com.tests.tests.api.EventBookingE2EFlowTest;
+import com.tests.steps.api.BookingSteps;
+import com.tests.steps.api.BookingE2EFlowSteps;
 import com.framework.testdata.TestCaseMetadata;
 import com.framework.testdata.TestCaseRecord;
 
 /**
  * One row of {@code testdata/json/api/api.json} feeding a {@code /bookings} case in {@link
- * BookingApiTest} (and the booking steps inside {@link EventBookingE2EFlowTest}). Splits
+ * BookingSteps} (and the booking steps inside {@link BookingE2EFlowSteps}). Splits
  * {@code metadata} ({@link TestCaseMetadata}) from the actual {@code data} ({@link
  * BookingApiData}), matching the JSON's own shape - see {@link
  * com.tests.application.testdata.LoginTestCase} for the identical shared-shape convention

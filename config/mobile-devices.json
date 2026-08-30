@@ -8,11 +8,6 @@
   "androidList": ["android1"],
   "iosList": ["ios1", "ios2"],
 
-  "matrices": {
-    "android": ["android1"],
-    "ios": ["ios1", "ios2"]
-  },
-
   "ports": {
     "systemPort": { "start": 8200, "count": 50 },
     "wdaLocalPort": { "start": 8100, "count": 50 },

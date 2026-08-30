@@ -30,8 +30,6 @@ import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
 import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -184,29 +182,22 @@ final class DriverFactory {
     /**
      * A mobile run names no device *details* of its own on the command line - device name,
      * platform version, and app path all come from {@code config/mobile-devices.json} only
-     * ({@link MobileDeviceMatrix}). Which device(s) is decided by whether {@code -Dparallel}
-     * is present:
-     * <ul>
-     *     <li><b>No {@code -Dparallel}:</b> {@link ConfigKeys#MOBILE_PLATFORM} (android/ios,
-     *     from {@code config/{env}.properties}) picks {@code androidList} or {@code iosList};
-     *     every test then uses that list's first id, sequentially.</li>
-     *     <li><b>{@code -Dparallel} present:</b> each test checks a device out of
-     *     {@link MobileDevicePool} (both lists combined, unless {@code -Dmobile.platform} was
-     *     given explicitly - see that class's javadoc) and blocks if every device is
-     *     currently busy - tests are distributed across the pool as a work queue, not one
-     *     device per test regardless of load.</li>
-     * </ul>
-     * An explicit {@code mobile.device.name} (config, {@code -D}, or a test override - e.g.
-     * {@code MultiDeviceParallelTest} setting one per matrix row) always wins over both and
-     * skips this resolution entirely.
+     * ({@link MobileDeviceMatrix}). Every scenario unconditionally checks a device out of
+     * {@link MobileDevicePool} (both {@code androidList}/{@code iosList} combined, unless
+     * {@code -Dmobile.platform} was given explicitly - see that class's javadoc) and blocks if
+     * every device is currently busy - scenarios are distributed across the pool as a work
+     * queue, not one device per scenario regardless of load. See {@link MobileDevicePool}'s own
+     * javadoc for why this is unconditional rather than gated behind a flag.
+     *
+     * <p>An explicit {@code mobile.device.name} (config, {@code -D}, or a
+     * {@code ConfigManager.setOverride} a step definition sets directly) always wins over the
+     * pool and skips this resolution entirely.</p>
      */
     private static void resolveActiveDeviceFromPoolIfNeeded() {
         if (ConfigManager.getString(ConfigKeys.MOBILE_DEVICE_NAME, null) != null) {
             return;
         }
-        MobileDeviceMatrix.Row device = MobileDevicePool.isPooledRunActive()
-                ? MobileDevicePool.checkout()
-                : MobileDeviceMatrix.loadDevice(firstIdInActivePlatformList());
+        MobileDeviceMatrix.Row device = MobileDevicePool.checkout();
         ConfigManager.setOverride(ConfigKeys.MOBILE_PLATFORM, device.platform());
         ConfigManager.setOverride(ConfigKeys.MOBILE_DEVICE_NAME, device.deviceName());
         ConfigManager.setOverride(ConfigKeys.MOBILE_PLATFORM_VERSION, device.platformVersion());
@@ -217,18 +208,6 @@ final class DriverFactory {
             // device lab) - every other device keeps using the shared appium.server.url.
             ConfigManager.setOverride(ConfigKeys.APPIUM_SERVER_URL, device.appiumServerUrl());
         }
-    }
-
-    /** The first device id in {@code mobile-devices.json}'s {@code androidList}/{@code iosList}, per {@link ConfigKeys#MOBILE_PLATFORM}. */
-    private static String firstIdInActivePlatformList() {
-        String platform = ConfigManager.getString(ConfigKeys.MOBILE_PLATFORM, "android").trim().toLowerCase(Locale.ROOT);
-        List<String> ids = "ios".equals(platform) ? MobileDeviceMatrix.iosList() : MobileDeviceMatrix.androidList();
-        if (ids.isEmpty()) {
-            throw new DriverInitializationException(
-                    "config/mobile-devices.json's '" + (platform.equals("ios") ? "iosList" : "androidList")
-                            + "' is empty.");
-        }
-        return ids.get(0);
     }
 
     private static String serverUrlFor(MobileDeviceProvider provider) {

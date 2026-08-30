@@ -1,11 +1,13 @@
 # OmniAuto — Web-Mobile-API Automation Framework
 
 One framework covering **Web** (Selenium), **Mobile** (Appium), and **API** (REST Assured) —
-shared configuration, secrets, driver/context management, test data, logging, and reporting,
-driven entirely by TestNG command-line flags. No suite XML anywhere.
+shared configuration, secrets, driver/context management, test data, logging, and reporting.
+Every test is a **Gherkin/BDD scenario** (Cucumber), driven through TestNG via `cucumber-testng`
+so retry/parallel/reporting stay TestNG-native under the hood — command-line flags throughout,
+no suite XML anywhere.
 
-**Stack:** JDK 17 · Maven · TestNG 7.10 · Selenium 4.25 · Appium 9.3 · REST Assured 5.5 ·
-Extent 5.1 + Allure 2.29 · Logback
+**Stack:** JDK 17 · Maven · TestNG 7.10 · Cucumber 7.20 (`cucumber-testng`) · Selenium 4.25 ·
+Appium 9.3 · REST Assured 5.5 · Extent 5.1 + Allure 2.29 · Logback
 
 ## Contents
 
@@ -40,29 +42,36 @@ depends on test code.
 
 **Key ideas:**
 
+- **Every test is BDD.** `.feature` files (`src/test/resources/features/**`) hold the actual
+  specs in Gherkin; `com.tests.steps.*` step-definition classes are the only place calling into
+  page objects/services. There is no plain `@Test` method anywhere in `com.tests`.
 - **Thread-safety is load-bearing.** Every shared object is either immutable, a
   concurrent-safe structure, or `ThreadLocal` — see [Thread safety](#thread-safety).
 - **One placeholder syntax everywhere.** `${{KEY}}` resolves against secrets, config, and
   runtime/API context through a single `PlaceholderResolver`, in test data, request bodies,
   anywhere text is resolved.
-- **No suite XML.** Class, method, group, browser, environment, parallel mode — all plain
-  `-D` flags. Picking a different subset is never a file edit.
+- **No suite XML.** Runner, feature file, scenario name, tag expression, browser, environment,
+  parallel mode — all plain `-D` flags. Picking a different subset is never a file edit.
 - **Zero boilerplate per test.** Retry, log-tagging, Extent/Allure reporting, and driver
-  cleanup are automatic via TestNG listeners.
+  cleanup are automatic via TestNG listeners (Cucumber scenarios run as ordinary TestNG
+  invocations under `cucumber-testng`, so every one of these still applies unchanged).
 
 **Known limitations:**
 
 - **Mobile needs local infra** (emulator/simulator + Appium server) — not available on a
-  hosted CI runner, so `mobile` is excluded from CI by default. Use a self-hosted runner or
+  hosted CI runner, so `@mobile` is excluded from CI by default. Use a self-hosted runner or
   BrowserStack.
 - **BrowserStack app upload is manual** — one-time per app version, via their own API.
-- **An empty `-Dgroups=X` match still reports `BUILD SUCCESS`** — always check the printed
-  test count.
+- **An empty `-Dcucumber.filter.tags="@x"` match still reports `BUILD SUCCESS`** — always check
+  the printed test count.
 
 ## Architecture
 
 ```
-                    TESTNG TESTS
+                 GHERKIN FEATURES (.feature)
+                          |
+                   STEP DEFINITIONS
+                  (com.tests.steps.*)
                           |
           +---------------+---------------+
           |               |               |
@@ -76,7 +85,8 @@ depends on test code.
                    FRAMEWORK CORE
       Configuration · Driver · Data · Logging · Reporting
                           |
-                  Parallel Execution
+              TestNG (via cucumber-testng)
+              Parallel Execution · Retry · Listeners
 ```
 
 ## Project structure
@@ -107,27 +117,44 @@ src/main/java/com/framework/     <- core framework: generic, reusable, knows not
     web/            BasePage, BaseComponent, WebActions, WebUtils, WebWaits - base classes only;
                     no concrete page lives here.
 
-src/test/java/com/tests/         <- application-specific: everything that only makes sense
-                                     because the app under test is eventhub - Web, Mobile, and
-                                     API surfaces of the same product. Two top-level packages,
-                                     nothing else: tests/ (every *Test.java spec, and only
-                                     specs) and application/ (everything a spec needs to run -
-                                     page objects, components, request/response DTOs, services,
-                                     test-case data). A tester opening tests/ sees only specs to
-                                     read/write; anything else lives in application/ instead.
-    tests/
-        api/          API test specs: AuthApiTest, EventApiTest, BookingApiTest, SystemApiTest,
-                      EventBookingE2EFlowTest (positive/negative/E2E, live API, no mocks)
-        mobile/       Mobile test specs: LoginTest, EventsTest, EventBookingE2EFlowTest
-                      (positive/negative/E2E), MultiDeviceParallelTest (device-matrix infra,
-                      app-agnostic) - eventhub's own Flutter app. Replaces an earlier suite
-                      against the public Sauce Labs SwagLabs demo app (removed).
-        web/          Web test specs: LoginTest, EventsTest (eventhub.rahulshettyacademy.com)
+src/test/resources/features/     <- the actual specs, in Gherkin - the only place test *behavior*
+                                     is described. One directory per surface:
+    web/            login.feature, events.feature
+    api/            auth.feature, events.feature, bookings.feature, system.feature,
+                    booking_e2e_flow.feature
+    mobile/         login.feature, events.feature, booking_e2e_flow.feature
+
+src/test/java/com/tests/         <- everything a .feature scenario needs to run, plus the
+                                     application-specific layer underneath it (page objects,
+                                     components, request/response DTOs, services, test-case
+                                     data) - because the app under test is eventhub, Web/Mobile/
+                                     API surfaces of the same product. A reader opening
+                                     features/ sees only specs to read/write; every "how" lives
+                                     here instead.
+    runners/          One class, RunCucumberTest, the actual entry point Surefire's TestNG
+                      discovery picks up (no suite XML, same as every class before this
+                      migration) - runs every feature under features/** (Web/API/Mobile
+                      together); surface selection is purely -Dcucumber.filter.tags, never a
+                      class name. Named RunCucumberTest specifically, not *Runner - see its own
+                      javadoc for why Surefire's default discovery needs that.
+    steps/            Step definitions, `@Given`/`@When`/`@Then` methods calling into
+                      page objects/services - the only code a .feature scenario invokes.
+        web/          LoginSteps, EventsSteps
+        api/          AuthSteps, EventSteps, BookingSteps, SystemSteps, BookingE2EFlowSteps,
+                      CommonApiSteps (the handful of steps genuinely shared across more than
+                      one API feature - see its own javadoc for why that's kept to one place)
+        mobile/       LoginSteps, EventsSteps, BookingE2EFlowSteps
+        shared/       One scenario-scoped context class per surface (WebScenarioContext,
+                      ApiScenarioContext, MobileScenarioContext) - constructor-injected via
+                      `cucumber-picocontainer` into every step-definition/hook class that needs
+                      it within one scenario, so they share state (page objects, services,
+                      "what to clean up") without inheriting from a common base class. This is
+                      the composition-based replacement for the pre-BDD `Base*Test` classes.
+    hooks/            WebHooks/ApiHooks/MobileHooks - Cucumber `@Before("@tag")`/`@After("@tag")`
+                      hooks scoped to a surface's tag, doing what that surface's old `Base*Test`
+                      `@BeforeMethod`/`@AfterMethod` used to (thread-state cleanup, releasing
+                      test data a scenario created).
     application/
-        base/             BaseApiTest/BaseMobileTest/BaseWebTest - the per-surface @BeforeMethod/
-                          @AfterMethod lifecycle (login, driver/dialog setup, thread-state
-                          cleanup) every spec in tests/ extends instead of re-declaring; see
-                          "Writing tests" below.
         pages/web/        Web Page Objects (LoginPage, HomePage, EventsPage)
         pages/mobile/     Mobile Page Objects (LoginPage, HomePage, EventsPage, EventDetailPage,
                           BookingConfirmationPage, MyBookingsPage)
@@ -148,7 +175,8 @@ src/test/java/com/tests/         <- application-specific: everything that only m
                                     for-byte identical across both, so one record instead of a
                                     near-duplicate WebLoginTestCase/MobileLoginTestCase pair) -
                                     read from web/web.json, android/android.json, and ios/ios.json
-            api/          AuthApiTestCase, EventPayloadTestCase, BookingApiTestCase - each
+            api/          AuthApiTestCase, EventPayloadTestCase, BookingApiTestCase (consumed by
+                          steps/api/AuthSteps, EventSteps, BookingSteps respectively) - each
                           file's *Data record (e.g. AuthApiTestCase.AuthApiData) is nested
                           inside it, so a pair is one file to create or update, not two.
                           AuthApiTestCase stays separate from LoginTestCase above despite the
@@ -182,11 +210,16 @@ scripts/            clean-local.sh — removes accumulated local run artifacts (
 | `ConfigParameterListener` | Bridges TestNG `<parameter>`s into `ConfigManager`, reset before every method |
 | `ApiContextListener` | Clears API/runtime context around every test |
 | `DriverCleanupListener` | Quits WebDriver/AppiumDriver after every test |
-| `ExtentReportingListener` | Creates/finalizes the Extent report node per test — skips API tests entirely (see Reporting) |
+| `ExtentReportingListener` | Creates/finalizes the Extent report node per scenario — skips API scenarios entirely (see Reporting) |
 | `ScreenshotCaptureListener` | Captures + attaches a failure screenshot to both reports |
 | `AllureParameterMaskingListener` | Masks every Allure "Parameters" entry (`@DataProvider` rows included) before `allure-testng` writes the result to disk — closes the `toString()`-bypasses-the-masker gap |
-| `ApiTestReportListener` | Starts/finalizes an API test's record on the separate `reports/api/` report (see Reporting) |
-| `BeforeMethodAlwaysRunListener` | Fails the suite at start-of-run if any `@BeforeMethod` has no `groups()` and no `alwaysRun = true` — turns the silent-skip-under-`-Dgroups=` footgun into a loud, actionable one |
+| `ApiTestReportListener` | Starts/finalizes an API scenario's record on the separate `reports/api/` report (see Reporting) |
+| `BeforeMethodAlwaysRunListener` | Fails the suite at start-of-run if any framework-internal `@BeforeMethod` has no `groups()` and no `alwaysRun = true` — turns a silent-skip-under-tag-filtering footgun into a loud, actionable one |
+| `AllureMetadataListener` | Feature/Story/Severity/Platform labels on Allure, derived from a scenario's real Gherkin tags/name (see Reporting) |
+
+`CucumberScenarioSupport` (`com.framework.listeners`, not itself a listener) is what makes the
+three listeners above see a scenario's real Gherkin tags/name instead of `cucumber-testng`'s one
+shared `runScenario` method and its generic annotation — see its own javadoc.
 
 ## Setup
 
@@ -205,7 +238,7 @@ git clone <repo-url> && cd OmniAuto
 cp .secret.env.example .secret.env   # fill in real values
 mvn clean compile
 
-# Mobile only, before -Dgroups=mobile: boot an emulator/simulator, then
+# Mobile only, before -Dcucumber.filter.tags="@mobile": boot an emulator/simulator, then
 appium --base-path /wd/hub
 ```
 
@@ -218,7 +251,8 @@ running the command above, check whether a server is already up rather than assu
 running correctly and there's nothing to start. An `EADDRINUSE`/"address already in use" error
 from the command itself means the same thing (port 4723 already bound); only kill the existing
 process (`pkill -f 'appium --base-path'`) and restart if you actually need to (e.g. picked up a
-global Appium config change) — otherwise leave it running and go straight to `-Dgroups=mobile`.
+global Appium config change) — otherwise leave it running and go straight to
+`-Dcucumber.filter.tags="@mobile"`.
 
 ## Configuration
 
@@ -416,104 +450,116 @@ extension-less `load(...)` call to a different source without touching test code
 
 ## Running tests
 
+Every scenario selection is a Cucumber tag expression or a runner/feature-file/scenario-name
+selector - never a suite XML, matching this repo's existing "everything is a `-D` flag"
+philosophy. `-Dgroups`/`-DexcludedGroups` (plain TestNG groups) no longer select anything
+scenario-scoped: every scenario physically runs through one shared TestNG method
+(`AbstractTestNGCucumberTests.runScenario`), so TestNG's own group filter can't see a scenario's
+tags - see `com.framework.listeners.CucumberScenarioSupport`'s javadoc for how the reporting
+listeners still recover them.
+
 ```bash
 mvn clean compile
 
 # Default "everything green" run — excludes mobile (no local emulator by default)
-mvn test -DexcludedGroups=mobile
+mvn test -Dcucumber.filter.tags="not @mobile"
 
-mvn clean test -Denv=qa -Dgroups=smoke -Dbrowser=chrome -Dheadless=true
-mvn test -Dtest=AuthApiTest                                      # one class
-mvn test -Dtest=AuthApiTest#loginWithExistingAccountWorks        # one method
-mvn test -Dtest=AuthApiTest,EventBookingE2EFlowTest               # several classes
-mvn test -Dgroups=smoke,api                                      # several groups
-mvn test -Dgroups=sanity -DexcludedGroups=mobile                 # one live test per surface
-mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4          # parallel
+mvn clean test -Denv=qa -Dcucumber.filter.tags="@smoke" -Dbrowser=chrome -Dheadless=true
+mvn test -Dcucumber.filter.tags="@api"                                     # one surface (every API scenario)
+mvn test -Dcucumber.filter.name="Logging in with an existing account works" # one scenario, by name
+mvn test -Dcucumber.features=src/test/resources/features/api/auth.feature   # one feature file
+mvn test -Dcucumber.filter.tags="@smoke and @api"                          # several tags
+mvn test -Dcucumber.filter.tags="@sanity and not @mobile"                  # one live test per surface
+mvn test -Dcucumber.filter.tags="@api" -Ddataproviderthreadcount=4   # parallel, one scenario per thread
 ```
 
-Real groups this codebase tags tests with, four independent axes combinable in any filter:
+Real tags every scenario carries, four independent axes combinable in any tag expression:
 
 | Axis | Values | Meaning |
 |---|---|---|
-| Run tier | `smoke`, `sanity` | `smoke` = broad, every PR; `sanity` = one narrowest "is anything even up" check per surface — see [CI/CD](#cicd) |
-| Surface | `api`, `web`, `mobile` | which stack drives the test |
-| Test shape | `positive`, `negative`, `e2e` | `positive`/`negative` = single-endpoint/screen happy-path vs. rejection case; `e2e` = a multi-step cross-resource journey (never combined with positive/negative - it's its own shape) |
-| Resource | `auth`, `events`, `bookings`, `system` | which domain the test covers - an `e2e` test carries every resource its journey touches (e.g. both `events` and `bookings`) |
+| Run tier | `@smoke`, `@sanity` | `@smoke` = broad, every PR; `@sanity` = one narrowest "is anything even up" check per surface — see [CI/CD](#cicd) |
+| Surface | `@api`, `@web`, `@mobile` | which stack drives the scenario |
+| Test shape | `@positive`, `@negative`, `@e2e` | `@positive`/`@negative` = single-endpoint/screen happy-path vs. rejection case; `@e2e` = a multi-step cross-resource journey (never combined with positive/negative - it's its own shape) |
+| Resource | `@auth`, `@events`, `@bookings`, `@system` | which domain the scenario covers - an `@e2e` scenario carries every resource its journey touches (e.g. both `@events` and `@bookings`) |
+
+`-Dcucumber.filter.tags` is a proper Cucumber tag expression, not a comma list —
+`and`/`or`/`not`, parenthesized as needed:
 
 ```bash
-mvn test -Dgroups=negative                          # every rejection/validation case, any surface
-mvn test -Dgroups=events -DexcludedGroups=mobile     # every events-domain test, Web+API
-mvn test -Dgroups=e2e                                # every multi-step journey, any surface
-mvn test -Dgroups=bookings,negative                  # booking rejection cases specifically
+mvn test -Dcucumber.filter.tags="@negative"                          # every rejection/validation scenario, any surface
+mvn test -Dcucumber.filter.tags="@events and not @mobile"            # AND / NOT - every events-domain scenario, Web+API
+mvn test -Dcucumber.filter.tags="@e2e"                                # every multi-step journey, any surface
+mvn test -Dcucumber.filter.tags="@bookings and @negative"             # booking rejection scenarios specifically
+mvn test -Dcucumber.filter.tags="@web or @api"                        # OR - either surface, no mobile
+mvn test -Dcucumber.filter.tags="(@events or @bookings) and @negative" # parenthesized - negative cases in either domain
 ```
 
-A group name nothing is tagged with matches zero tests but still reports `BUILD SUCCESS` —
-check the printed test count. `MultiDeviceParallelTest` (device-matrix infra, app-agnostic - see
-"Mobile" below) deliberately carries none of the test-shape/resource tags above: it isn't
-verifying product behavior, so `positive`/`negative`/a resource tag would misrepresent what it
-actually checks.
+A tag expression matching nothing still reports `BUILD SUCCESS` (0 scenarios run) —
+check the printed test count.
+
+**Every run is parallel by default — up to 10 scenarios at once, not 1** (see [Parallel
+execution](#parallel-execution) below for the full explanation and why `-Dparallel`/
+`-DthreadCount` have no effect here; `-Ddataproviderthreadcount=N` is the actual control knob,
+`=1` for strictly sequential).
 
 **Rerunning only what failed:** Surefire's TestNG provider writes
 `target/surefire-reports/testng-failed.xml` after every run — a suite file listing just the
-classes/methods that failed, regardless of the fact that this repo has no suite XML of its own.
+scenarios that failed, regardless of the fact that this repo has no suite XML of its own.
 Feed it straight back in to rerun only those:
 
 ```bash
 mvn -Dsurefire.suiteXmlFiles=target/surefire-reports/testng-failed.xml test
 ```
 
-Confirmed live: after a run with one failing method, this reran exactly that method and
+Confirmed live: after a run with one failing scenario, this reran exactly that scenario and
 nothing else. Overwritten by the next full run, so grab a copy first if you want to keep
 retrying a specific failure while iterating on other tests.
 
-**API** — every real class: `AuthApiTest`, `EventApiTest`, `BookingApiTest`, `SystemApiTest`,
-`EventBookingE2EFlowTest`.
+**API** — every feature in `features/api/`: `auth.feature`, `events.feature`,
+`bookings.feature`, `system.feature`, `booking_e2e_flow.feature`, selected with `@api`.
 
 ```bash
-mvn test -Dgroups=api                                              # every API test
-mvn test -Dgroups=smoke,api                                        # just the smoke-tagged ones
-mvn test -Dtest=AuthApiTest                                        # one class
-mvn test -Dtest=AuthApiTest#loginWithExistingAccountWorks           # one method
-mvn test -Dtest=AuthApiTest,EventBookingE2EFlowTest                 # several classes
-mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4            # parallel, one class per thread
-mvn test -Dgroups=api -Dparallel=methods -DthreadCount=8            # parallel, one method per thread
-mvn test -Denv=dev -Dgroups=api                                     # against dev instead of qa
+mvn test -Dcucumber.filter.tags="@api"                                              # every API scenario
+mvn test -Dcucumber.filter.tags="@smoke and @api"                                   # just the smoke-tagged ones
+mvn test -Dcucumber.features=src/test/resources/features/api/auth.feature          # one feature file
+mvn test -Dcucumber.filter.name="Logging in with an existing account works"        # one scenario, by name
+mvn test -Dcucumber.features="src/test/resources/features/api/auth.feature,src/test/resources/features/api/booking_e2e_flow.feature"  # several feature files
+mvn test -Dcucumber.filter.tags="@api" -Ddataproviderthreadcount=4           # parallel, one scenario per thread
+mvn test -Dcucumber.filter.tags="@api" -Ddataproviderthreadcount=8           # same, more concurrent load on the API
+mvn test -Denv=dev -Dcucumber.filter.tags="@api"                                    # against dev instead of qa
 ```
 
-**Web** — every real class: `LoginTest`, `EventsTest`.
+**Web** — `features/web/login.feature`, `events.feature`, selected with `@web`.
 
 ```bash
-mvn test -Dgroups=web                                               # every Web test
-mvn test -Dgroups=smoke,web                                         # just the smoke-tagged ones
-mvn test -Dtest=LoginTest                                           # one class
-mvn test -Dtest=LoginTest#validLoginNavigatesToHomePage              # one method
-mvn test -Dtest=LoginTest,EventsTest                                 # several classes
-mvn test -Dgroups=web -Dbrowser=firefox -Dheadless=true               # browser: chrome (default) | firefox | edge | safari
-                                                                       # (cross-browser coverage is CI's job matrix, not a per-test loop - see CI/CD)
-mvn test -Dgroups=web -Dparallel=classes -DthreadCount=4 -Dheadless=true
-mvn test -Denv=dev -Dgroups=web -Dbrowser=chrome -Dheadless=true      # against dev instead of qa
+mvn test -Dcucumber.filter.tags="@web"                                              # every Web scenario
+mvn test -Dcucumber.filter.tags="@smoke and @web"                                   # just the smoke-tagged ones
+mvn test -Dcucumber.features=src/test/resources/features/web/login.feature          # one feature file
+mvn test -Dcucumber.filter.name="Valid login navigates to the home page"            # one scenario, by name
+mvn test -Dcucumber.filter.tags="@web" -Dbrowser=firefox -Dheadless=true             # browser: chrome (default) | firefox | edge | safari
+                                                                                      # (cross-browser coverage is CI's job matrix, not a per-scenario loop - see CI/CD)
+mvn test -Dcucumber.filter.tags="@web" -Ddataproviderthreadcount=4 -Dheadless=true
+mvn test -Denv=dev -Dcucumber.filter.tags="@web" -Dbrowser=chrome -Dheadless=true    # against dev instead of qa
 ```
 
-**Mobile** — every real class: `LoginTest`, `EventsTest`, `EventBookingE2EFlowTest`,
-`MultiDeviceParallelTest` (device-matrix infra, app-agnostic). eventhub's own Flutter app
-(replaces an earlier suite against the public Sauce Labs SwagLabs demo app, removed) - login,
-browse/search events, and a full login→book→confirm→My Bookings journey, each verified live
-against a real iPhone 17 Pro/iPhone 17 Simulator session before being committed (Appium +
-XCUITest, real page source, not guessed locators). Device details are never passed on the
-CLI; whether it runs sequentially on one device or in parallel across several depends only on
-whether `-Dparallel` is present:
+**Mobile** — `features/mobile/login.feature`, `events.feature`, `booking_e2e_flow.feature`,
+selected with `@mobile`. eventhub's own Flutter app (replaces an earlier suite against the
+public Sauce Labs SwagLabs demo app, removed) - login, browse/search events, and a full
+login→book→confirm→My Bookings journey, each verified live against a real iPhone 17 Pro/
+iPhone 17 Simulator session before being committed (Appium + XCUITest, real page source, not
+guessed locators). Device details are never passed on the CLI; whether a run is sequential (one
+device) or parallel (every configured device, pooled) depends only on whether `-Dparallel` is
+present:
 
 ```bash
-mvn test -Dgroups=mobile                                              # sequential, one device (android by default)
-mvn test -Dgroups=mobile -Dmobile.platform=ios                        # sequential, iOS instead - one line, no other flags
-mvn test -Dgroups=mobile -Dtest=LoginTest                             # one class
-mvn test -Dgroups=mobile -Dtest=LoginTest#validCredentialsLogInAndShowHomeScreen  # one method
-mvn test -Dgroups=mobile -Dtest=LoginTest,EventsTest,EventBookingE2EFlowTest  # several classes
-mvn test -Dgroups=mobile -Dparallel=methods -DthreadCount=3           # pooled across every device (work queue)
-mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK ...    # real device / cloud farm, see BrowserStack
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachAndroidDeviceConcurrently     # same test, every Android device at once
-mvn test -Dtest=MultiDeviceParallelTest#appLaunchesOnEachIosSimulatorConcurrently      # same test, every iOS device at once
-mvn test -Denv=dev -Dgroups=mobile                                    # against dev instead of qa
+mvn test -Dcucumber.filter.tags="@mobile"                                                    # sequential, one device (android by default)
+mvn test -Dcucumber.filter.tags="@mobile" -Dmobile.platform=ios                               # sequential, iOS instead - one line, no other flags
+mvn test -Dcucumber.features=src/test/resources/features/mobile/login.feature                # one feature file
+mvn test -Dcucumber.filter.name="Valid credentials log in and show the home screen"           # one scenario, by name
+mvn test -Dcucumber.features="src/test/resources/features/mobile/login.feature,src/test/resources/features/mobile/events.feature,src/test/resources/features/mobile/booking_e2e_flow.feature"  # several feature files
+mvn test -Dcucumber.filter.tags="@mobile" -Ddataproviderthreadcount=3                   # pooled across every configured device
+mvn test -Dcucumber.filter.tags="@mobile" -Dmobile.device.provider=BROWSERSTACK ...           # real device / cloud farm, see BrowserStack
+mvn test -Denv=dev -Dcucumber.filter.tags="@mobile"                                            # against dev instead of qa
 ```
 
 **iOS needs a Simulator-targeted build specifically, not just "the iOS app".** A real-device
@@ -527,7 +573,7 @@ one file installs on both a real device and an emulator.
 
 This build's login always succeeds regardless of the password typed - verified live, its own
 mock backend authenticates any well-formed credentials as one fixed demo account - so
-`LoginTest`'s negative cases are the client-side form validation Flutter itself enforces
+`login.feature`'s negative scenarios are the client-side form validation Flutter itself enforces
 (blank fields, a malformed email), not a server-rejected wrong password; see `LoginPage`'s
 class javadoc.
 
@@ -544,41 +590,35 @@ emulator/simulator is used regardless of `-Denv`:
   },
   "androidList": ["android1"],
   "iosList": ["ios1", "ios2"],
-  "matrices": { "android": ["android1"], "ios": ["ios1", "ios2"] },
   "ports": { "systemPort": { "start": 8200, "count": 50 } }
 }
 ```
 
-- **Sequential** (`mvn test -Dgroups=mobile`, no `-Dparallel`): `mobile.platform` in
-  `config/{env}.properties` (`android` or `ios`) picks `androidList`/`iosList`, and the first
-  id in that list is used for every test. Switch platform with a one-line config edit — no
-  `-D` device flags, no code change. (An explicit `-Dmobile.platform=...`/`-Dmobile.device.name=...`
-  still overrides everything for a genuine one-off, but it's never required.)
-- **Parallel** (`-Dparallel` present, any mode/thread count): every test is distributed across
-  `androidList` + `iosList` combined as a work queue — whichever device finishes first picks
-  up the next queued test, not "one device per thread regardless of load," and not "the same
-  test on every device" (that's the `matrices` case below). Existing test classes
-  (`LoginTest`, `EventsTest`, ...) need no changes to participate. Add an explicit
-  `-Dmobile.platform=ios` (or `android`) alongside `-Dparallel` to narrow the pool to just that
-  platform's list instead — e.g. `-Dmobile.platform=ios -Dparallel=methods -DthreadCount=2`
-  pools across `iosList` only, useful when no Android emulator/device happens to be available
-  for a given run. Omitting it keeps the combined-pool default.
+- **Every scenario always draws from `MobileDevicePool`** (`androidList` + `iosList` combined by
+  default) — there's no separate "sequential mode"; a run with only one device configured (or
+  narrowed to one via `-Dmobile.platform`) is just a pool of one, so concurrent scenario threads
+  queue for it one at a time, the same practical effect a dedicated sequential code path used to
+  give, without needing one. `mvn test -Dcucumber.filter.tags="@mobile"` alone is therefore
+  effectively sequential today (`androidList` has one entry) purely because of what's in
+  `config/mobile-devices.json`, not because of any command-line flag.
+- **`-Dmobile.platform=ios`** (or `android`) narrows the pool to just that platform's list —
+  e.g. `-Dmobile.platform=ios -Ddataproviderthreadcount=2` pools across `iosList` only (both
+  configured simulators, genuinely concurrent), useful when no Android emulator/device happens
+  to be available for a given run. Omitting it keeps the combined-pool default. (An explicit
+  `-Dmobile.device.name=...` still overrides everything for a genuine one-off, but it's never
+  required.)
 - **Which app binary** each platform installs is an environment/build concern, so it's in
   `config/{env}.properties`, not the JSON file: `mobile.app.path.android`,
   `mobile.app.path.ios` — one entry per platform, since every device on that platform runs the
   same build.
-- **Same test on every device at once** (a *matrix*, not a work queue — the last two commands
-  in the list above): `matrices` is a comma-separated list of ids from the same `devices` map
-  — a device used by more than one matrix is still declared only once.
 
-Add a device, a new matrix, or point `androidList`/`iosList`/`mobile.platform` at a different
-one, by editing `config/mobile-devices.json` (devices/lists/matrices) or
-`config/{env}.properties` (`mobile.platform`) — no code to touch. See
-`com.framework.driver.MobileDeviceMatrix`.
+Add a device, or point `androidList`/`iosList`/`mobile.platform` at a different one, by editing
+`config/mobile-devices.json` (devices/lists) or `config/{env}.properties` (`mobile.platform`) —
+no code to touch. See `com.framework.driver.MobileDeviceMatrix`/`MobileDevicePool`.
 
 **Appium ports:** `appium.server.url` (`http://127.0.0.1:4723/wd/hub` by default) is the
-*one* Appium server every `LOCAL` session — sequential, pooled, or matrix — connects through;
-one HTTP port legitimately serving many concurrent sessions is normal, the same as any web
+*one* Appium server every `LOCAL` session — sequential or pooled — connects through; one
+HTTP port legitimately serving many concurrent sessions is normal, the same as any web
 server. Each individual session then gets its own separate, per-session automation port on
 top of that: `systemPort` for Android (UiAutomator2, from `8200`), `wdaLocalPort` for iOS
 (XCUITest, from `8100`), and `chromedriverPort` for an Android device whose JSON entry sets
@@ -592,17 +632,32 @@ defaults shown above).
 
 ## Examples
 
-**Web:**
+**Web** (`features/web/login.feature` + `steps/web/LoginSteps`):
+
+```gherkin
+@smoke @web
+Scenario: Valid login navigates to the home page
+  Given I am on the login page
+  When I log in with the "validLogin" web test data
+  Then the home page should be displayed
+```
 
 ```java
-@Test(groups = {"smoke", "web"})
-public void validLoginNavigatesToHomePage() {
-    new LoginPage().open(ConfigManager.getBaseUrl())
-            .enterEmail(SecretManager.get("EVENTHUB_EMAIL"))
-            .enterPassword(SecretManager.get("EVENTHUB_PASSWORD"))
-            .clickLogin();
+@Given("I am on the login page")
+public void iAmOnTheLoginPage() {
+    context.loginPage = new LoginPage().open(ConfigManager.getBaseUrl());
+}
 
-    assertTrue(new HomePage().isDisplayed());
+@When("I log in with the {string} web test data")
+public void iLogInWithTheWebTestData(String caseName) {
+    LoginData data = TestDataSurface.WEB.getCaseData(caseName, LoginTestCase.class);
+    context.loginPage.enterEmail(data.email()).enterPassword(data.password()).clickLogin();
+}
+
+@Then("the home page should be displayed")
+public void theHomePageShouldBeDisplayed() {
+    context.homePage = new HomePage();
+    assertTrue(context.homePage.isDisplayed(), "...");
 }
 ```
 
@@ -610,20 +665,26 @@ Page Objects extend `BasePage`, expose business-level actions only, and log each
 (`logger.info(...)`), which mirrors automatically into the Extent report. `assertTrue` here is
 `com.framework.utils.Verify`'s, not `org.testng.Assert`'s directly — same signature (drop-in,
 just a different static import), but logs its own PASS/FAIL step to both reports as it runs
-instead of being invisible until the test's final summary. See [Reporting](#reporting).
+instead of being invisible until the scenario's final summary. `context` is a
+`WebScenarioContext` (`steps/shared/`), constructor-injected via `cucumber-picocontainer` so
+`LoginSteps` and every other Web step-definition class in the same scenario share the same page
+objects. See [Reporting](#reporting) and [Writing tests](#writing-tests).
 
-**Mobile:**
+**Mobile** (`features/mobile/login.feature` + `steps/mobile/LoginSteps`):
+
+```gherkin
+@smoke @sanity @mobile
+Scenario: Valid credentials log in and show the home screen
+  Given the app is launched logged out
+  When I log in with the "validCredentials" mobile test data
+  Then the home screen should be displayed
+```
 
 ```java
-@BeforeMethod(alwaysRun = true)
-public void launchApp() { MobileDriverManager.getDriver(); }
-
-@Test(groups = {"smoke", "sanity", "mobile"})
-public void validCredentialsLogInAndShowHomeScreen() {
-    new LoginPage().enterEmail(SecretManager.get("EVENTHUB_EMAIL"))
-            .enterPassword(SecretManager.get("EVENTHUB_PASSWORD"))
-            .tapSignIn();
-    assertTrue(new HomePage().isDisplayed());
+@When("I log in with the {string} mobile test data")
+public void iLogInWithTheMobileTestData(String caseName) {
+    LoginData data = TestDataSurface.currentMobile().getCaseData(caseName, LoginTestCase.class);
+    context.loginPage.enterEmail(data.email()).enterPassword(data.password()).tapSignIn();
 }
 ```
 
@@ -633,14 +694,20 @@ exposes as `accessibilityId` on iOS (`content-desc` on Android, since one Flutte
 tree drives both) - rather than dedicated `test-*` ids (the earlier SwagLabs app's own
 convention, not something this codebase controls).
 
-**API:**
+**API** (`features/api/auth.feature` + `steps/api/AuthSteps`):
+
+```gherkin
+@smoke @api @auth
+Scenario: Logging in with an existing account works
+  When I log in with the "loginExistingAccount" auth test data
+  Then the login should report success with a usable token matching the account logged in with
+```
 
 ```java
-@Test(groups = {"smoke", "api"})
-public void loginWithExistingAccountWorks() {
-    AuthResponse response = authService.login(
-            SecretManager.get("EVENTHUB_EMAIL"), SecretManager.get("EVENTHUB_PASSWORD"));
-    assertTrue(response.success());
+@When("I log in with the {string} auth test data")
+public void iLogInWithTheAuthTestData(String caseName) {
+    AuthApiData caseData = data(caseName);
+    authResponse = context.authService.login(caseData.email(), caseData.password());
 }
 ```
 
@@ -668,29 +735,49 @@ covers `ApiClient`'s bearer token (`${{accessToken}}`).
 ## Parallel execution
 
 ```bash
-mvn test -Dgroups=api -Dparallel=classes -DthreadCount=4
+mvn test -Dcucumber.filter.tags="@api" -Ddataproviderthreadcount=4
 ```
 
-Plain Surefire/TestNG system properties — no suite XML needed. `-Dparallel=classes` runs
-each class on its own thread; `-Dparallel=methods` parallelizes at the method level.
+**Every run is parallel by default, up to 10 scenarios at once — `-Dparallel`/`-DthreadCount`
+have no effect on this at all.** Every scenario is one row of the single `RunCucumberTest`
+runner's own `@DataProvider(parallel = true)` (`cucumber-testng`'s documented mechanism, not a
+custom addition). TestNG spreads a *parallel data provider's* invocations across its own
+dedicated thread pool — sized by `-Ddataproviderthreadcount` (default `10`) — completely
+independently of whether `-Dparallel=methods`/`-Dparallel=classes` and `-DthreadCount` are
+passed at all; those two flags parallelize separate `@Test` *methods*/classes against each
+other, and this project has exactly one (`runScenario`), so they're inert here. Audit finding,
+verified by disassembling the pinned `cucumber-testng` jar (`scenarios()` carries a bare
+`@DataProvider` with no `parallel` attribute at all - defaulting to `false` - unless overridden,
+which `RunCucumberTest` now does): an earlier version of this project documented
+`-Dparallel=methods -DthreadCount=N` as the parallelism control here, which never actually took
+effect, so every "verified live with N threads" claim from that period was unknowingly running
+single-threaded the whole time.
 
-Mobile parallelizes the same way (`-Dparallel` present, any mode), distributing tests across
-every configured device as a work queue instead of one shared device — see
-[Running tests](#running-tests). Distinct `systemPort`/`wdaLocalPort`/`chromedriverPort` per
-session are handled automatically. Genuine parallel mobile needs multiple emulators/devices/
-BrowserStack capacity, since one local emulator only runs one session at a time.
+```bash
+mvn test -Ddataproviderthreadcount=1     # strictly sequential, one scenario at a time
+mvn test -Ddataproviderthreadcount=20    # a wider pool, e.g. on a beefier CI runner
+```
+
+Mobile parallelizes through the same mechanism, distributing scenarios across every configured
+device as a work queue instead of one shared device — see [Running tests](#running-tests) and
+`MobileDevicePool`'s own javadoc. Distinct `systemPort`/`wdaLocalPort`/`chromedriverPort` per
+session are handled automatically, and the pool always draws from every configured device
+regardless of pool size (a pool of one device is just as correct, only sequential in practice) —
+genuine parallel mobile still needs multiple emulators/devices/BrowserStack capacity actually
+booted, since one local emulator only runs one session at a time no matter how wide the pool is.
 
 ## Reporting
 
-**API tests use a completely separate report from Web/Mobile** — `reports/api/index.html`, a
+**API scenarios use a completely separate report from Web/Mobile** — `reports/api/index.html`, a
 self-contained, dependency-free HTML dashboard (no Extent, no Allure, no CDN/network access
 assumed) grouped by module (Authentication/Events/Bookings/Health & Config/End-to-End), one
-collapsible row per test with full request/response detail and Expected/Actual assertions - see
-[API Report](#api-report) below. Everything in this section past that is Web/Mobile only:
-`com.framework.api`/`com.framework.utils.Verify` never touch Extent or Allure for an API test
-(`ApiTestReportListener`/`ExtentReportingListener`/`AllureMetadataListener` all key off the
-`"api"` TestNG group to keep the two fully separate), and `report.types` below has no effect on
-the API report at all - it always renders, controlled only by `report.overwrite`.
+collapsible row per scenario with full request/response detail and Expected/Actual assertions -
+see [API Report](#api-report) below. Everything in this section past that is Web/Mobile only:
+`com.framework.api`/`com.framework.utils.Verify` never touch Extent or Allure for an API
+scenario (`ApiTestReportListener`/`ExtentReportingListener`/`AllureMetadataListener` all key off
+the `@api` Gherkin tag, via `CucumberScenarioSupport`, to keep the two fully separate), and
+`report.types` below has no effect on the API report at all - it always renders, controlled only
+by `report.overwrite`.
 
 **Which report(s) get this framework's own enrichment is configurable** —
 `report.types` (default `extent`; `allure`, or `extent,allure` — see
@@ -711,17 +798,18 @@ dependency entirely could do that) - `report.types=extent` only skips this frame
 - **Extent** (`reports/extent/index.html` by default, or a timestamped file per run if
   `report.overwrite=false` — see [Configuration](#configuration)) — every `logger.info(...)`
   in the business-narrative layer (Web/Mobile Page Objects and Components) mirrors into the
-  report automatically via a Logback appender. The test title itself is a humanized version of
-  the method name (`LoginTest — Login With Invalid Password Fails`, not the raw
-  `loginWithInvalidPasswordFails`) — see `ExtentReportingListener`.
+  report automatically via a Logback appender. The test title itself is the scenario's own
+  Gherkin name (`Invalid login shows an error and stays on the login page`, not a Java method
+  name at all - `AbstractTestNGCucumberTests.runScenario` is the only physical method every
+  scenario invokes) — see `ExtentReportingListener`/`CucumberScenarioSupport`.
 - **Assertion detail in Extent/Allure** — every assertion logs its own PASS/FAIL step inline,
-  where it happened, not just the test's final summary: `com.framework.utils.Verify` (a
+  where it happened, not just the scenario's final summary: `com.framework.utils.Verify` (a
   drop-in `org.testng.Assert.assertTrue`/`assertFalse`/`assertEquals`/`assertNotNull`
-  replacement — same signatures, swap the static import) for Web/Mobile test-code assertions.
-  Neither changes assertion semantics — it still delegates to (or throws exactly like) the real
-  thing; it only adds the missing report step around it. For an API test, `Verify` and
-  `ApiResponse#assertStatusCode` report to the separate [API Report](#api-report) instead — see
-  that section, not this one.
+  replacement — same signatures, swap the static import) for Web/Mobile step-definition
+  assertions. Neither changes assertion semantics — it still delegates to (or throws exactly
+  like) the real thing; it only adds the missing report step around it. For an API scenario,
+  `Verify` and `ApiResponse#assertStatusCode` report to the separate [API Report](#api-report)
+  instead — see that section, not this one.
 - **Allure** (`allure-results/`, raw JSON — `allure serve allure-results` to view), when
   `report.types` includes `allure`. With `allure` excluded, `allure-results/` still gets
   `allure-testng`'s own bare pass/fail entries (see above), just none of this:
@@ -737,23 +825,24 @@ dependency entirely could do that) - `report.types=extent` only skips this frame
     no iOS equivalent, best-effort), and masked page source, all attached on failure (same
     listener/window as Web).
   - **Feature/Story/Severity/Platform labels** (Web/Mobile only - `AllureMetadataListener`
-    skips API tests the same way `ExtentReportingListener` does, see the note at the top of this
-    section) and an **Environment** widget (`allure-results/environment.properties`, every run
-    regardless of surface) - all derived automatically from data this framework already has
-    (the `@Test(groups=...)` taxonomy, `ConfigManager`). Retry grouping and parallel/timeline
-    data are native to `allure-testng` already; nothing extra was needed for either.
+    skips API scenarios the same way `ExtentReportingListener` does, see the note at the top of
+    this section) and an **Environment** widget (`allure-results/environment.properties`, every
+    run regardless of surface) - all derived automatically from data this framework already has
+    (a scenario's own Gherkin tags, via `CucumberScenarioSupport`; `ConfigManager`). Retry
+    grouping and parallel/timeline data are native to `allure-testng` already; nothing extra was
+    needed for either.
 - **Test case metadata** — every `TestDataManager.getCaseData(...)` call (i.e. every test data
   load) logs its `testCaseId`/`testCaseName` (reaching Extent for free via the Logback bridge
   above) and attaches them as Allure parameters (`AllureManager.attachTestCaseMetadata`) - so a
   failure in either report is immediately traceable to the exact named test case (and its
-  file/row), filterable/sortable in Allure, without a test author adding any reporting code.
+  file/row), filterable/sortable in Allure, without a step-definition author adding any
+  reporting code.
 - **Screenshots** — `screenshot.mode` = `FAILURE` (default) | `EVERY_ACTION` | `DISABLED`.
 - **Retry** — `RetryAnalyzer` (`retry.max.count`, default 1) retries everything except
   `AssertionError`; a retried attempt's own report entry is kept, labeled `(Retry N)`. The same
   policy/limit also covers `@BeforeMethod`/`@AfterMethod` (`ConfigurationRetryListener`) - a
-  transient failure in per-test setup/teardown (e.g. an API test's login hitting a momentary
-  502) gets the same retry a `@Test` body would, instead of failing outright and skipping every
-  other `@Test` in that class.
+  transient failure in per-scenario setup/teardown (e.g. an API scenario's login hitting a
+  momentary 502) gets the same retry a scenario's own steps would, instead of failing outright.
 - **Coverage** — `mvn test` also runs Jacoco (`jacoco-maven-plugin`, bound to the `test` phase
   itself, not `verify`, so plain `mvn test` is enough): `target/site/jacoco/index.html` for a
   human-readable `com.framework.*` line-coverage report. Not gated - the `com.tests.base`
@@ -774,17 +863,17 @@ assumed.
 - **Summary cards** — total/passed/failed/skipped test counts and total suite duration, plus a
   perf strip (average response time, total API calls, slowest call).
 - **Grouped by module** — `Authentication`/`Bookings`/`Events`/`Health & Config`/`End-to-End`,
-  derived from the same `@Test(groups=...)` tags every API test already carries (`auth`/
-  `bookings`/`events`/`system`/`e2e`) - see `ApiTestReportListener`.
-- **One collapsible row per test** — pass/fail/skip icon, the humanized test title (same
-  convention as Extent's, `ExtentReportingListener`'s own javadoc), and either the single
-  call's method/endpoint/status/duration inline, or a call count for a multi-call test (e.g.
-  `EventBookingE2EFlowTest`'s create-event/book/verify/cleanup sequence) - expand for full
-  detail: masked request headers/body and response body per call (each in its own collapsible,
-  copyable code block), and every `Verify`/`ApiResponse#assertStatusCode` check made against it
-  as a plain Expected/Actual pair, not a technical assertion sentence.
-- **Search + tag filters** — filter by test name/endpoint text, or toggle any `@Test(groups=...)`
-  tag (`smoke`, `positive`, `negative`, ...) to narrow the visible rows - both client-side, no
+  derived from the same Gherkin tags every API scenario already carries (`@auth`/`@bookings`/
+  `@events`/`@system`/`@e2e`) - see `ApiTestReportListener`.
+- **One collapsible row per scenario** — pass/fail/skip icon, the scenario's own Gherkin name
+  (`CucumberScenarioSupport#displayName`), and either the single call's method/endpoint/status/
+  duration inline, or a call count for a multi-call scenario (e.g. `booking_e2e_flow.feature`'s
+  create-event/book/verify/cleanup sequence) - expand for full detail: masked request headers/
+  body and response body per call (each in its own collapsible, copyable code block), and every
+  `Verify`/`ApiResponse#assertStatusCode` check made against it as a plain Expected/Actual pair,
+  not a technical assertion sentence.
+- **Search + tag filters** — filter by scenario name/endpoint text, or toggle any Gherkin tag
+  (`smoke`, `positive`, `negative`, ...) to narrow the visible rows - both client-side, no
   server/build step involved.
 - **Status pills are display-only** — colored purely by HTTP status class (2xx green, 4xx amber,
   5xx red) for at-a-glance reading; they are *not* the test's pass/fail signal. A test that
@@ -794,7 +883,7 @@ assumed.
 Branding (`report.api.title`/`report.api.name`, both optional - see `ConfigKeys`) and the
 overwrite behavior (`report.overwrite`, shared with Extent's) are the only configurable knobs;
 there is no equivalent of `report.types` here - the API report always renders when at least one
-API test ran this suite, and is skipped entirely (not written as an empty file) on a pure
+API scenario ran this suite, and is skipped entirely (not written as an empty file) on a pure
 Web/Mobile run.
 
 ## CI/CD
@@ -804,9 +893,9 @@ same `mvn` command shape you'd run locally:
 
 | Job | Trigger | Command shape |
 |---|---|---|
-| `smoke` | Every pull request | Matrix over `chrome`/`firefox`: `-Denv=qa -Dgroups=smoke -Dbrowser=<matrix> -Dheadless=true -DexcludedGroups=mobile` |
-| `regression` | Push to `main` | Same matrix, `-Dgroups=` (every group) |
-| `regression-manual` | Manual dispatch | Single browser — `env`/`groups`/`browser` from the dispatch inputs (default `qa`/every group/`chrome`) |
+| `smoke` | Every pull request | Matrix over `chrome`/`firefox`: `-Denv=qa -Dcucumber.filter.tags="@smoke and not @mobile" -Dbrowser=<matrix> -Dheadless=true` |
+| `regression` | Push to `main` | Same matrix, `-Dcucumber.filter.tags="not @mobile"` (every tag but mobile) |
+| `regression-manual` | Manual dispatch | Single browser — `env`/`tags`/`browser` from the dispatch inputs (default `qa`/every tag/`chrome`), always ANDed with `not @mobile` |
 
 `smoke`/`regression` run a real `chrome`+`firefox` matrix (`fail-fast: false`, so one browser's
 failure doesn't cancel the other) — `ubuntu-latest` only guarantees Chrome and Firefox
@@ -817,9 +906,9 @@ combination, not asking for the full sweep.
 Every job archives `target/surefire-reports/`, `logs/`, `reports/extent/`, `reports/api/`,
 `allure-results/`, `target/screenshots/`, and `target/site/jacoco/` regardless of pass/fail
 (per-browser artifact names, since a matrix run can't share one name across its own legs).
-`reports/api/` only has content when the job's group filter actually included any API tests -
-the smoke/regression jobs above (`-DexcludedGroups=mobile`, no `api` exclusion) do include them.
-None of these jobs pass
+`reports/api/` only has content when the job's tag filter actually included any `@api`
+scenarios - the smoke/regression jobs above (`not @mobile`, no `@api` exclusion) do include
+them. None of these jobs pass
 `-Dreport.types=...`, so Web/Mobile get the default (`extent` only, see [Reporting](#reporting)) -
 the archived `allure-results/` is `allure-testng`'s own bare native capture, not this
 framework's enrichment; add `-Dreport.types=extent,allure` to a job's command if a downstream
@@ -836,7 +925,7 @@ The same Mobile test/Page Object code runs unchanged against BrowserStack — on
 `mobile.device.provider` and a few config values change:
 
 ```bash
-mvn test -Dgroups=mobile -Dmobile.device.provider=BROWSERSTACK \
+mvn test -Dcucumber.filter.tags="@mobile" -Dmobile.device.provider=BROWSERSTACK \
     -Dmobile.device.name="Samsung Galaxy S23" -Dmobile.platform.version=13 \
     -Dbrowserstack.app.id=bs://<app-id-from-browserstack-upload>
 ```
@@ -855,22 +944,43 @@ BrowserStack.
 
 ## Writing tests
 
-Test code calls only business-level Page Object/Service methods — never raw
-Selenium/Appium/REST Assured. Retry, logging, reporting, and driver cleanup are automatic.
+Every test is a Gherkin scenario. Step definitions call only business-level Page Object/Service
+methods — never raw Selenium/Appium/REST Assured. Retry, logging, reporting, and driver cleanup
+are automatic.
 
-> **Every new `@BeforeMethod` needs `alwaysRun = true`.** `BeforeMethodAlwaysRunListener` now
-> fails the suite at start-of-run with the exact `Class#method` if one is missing it, rather
-> than letting it silently stop running the moment `-Dgroups=` is added to a command - still
-> worth getting right the first time, but no longer a silent trap if you don't.
+> **A framework-internal `@BeforeMethod` (not a Cucumber `@Before` hook) still needs
+> `alwaysRun = true`.** `BeforeMethodAlwaysRunListener` fails the suite at start-of-run with the
+> exact `Class#method` if one is missing it, rather than letting it silently stop running the
+> moment a tag filter narrows a run - still worth getting right the first time, but no longer a
+> silent trap if you don't. Cucumber's own `@Before`/`@After` hooks (`com.tests.hooks.*`) always
+> run for every scenario matching their tag expression regardless of `-Dcucumber.filter.tags`,
+> so this doesn't apply to them.
 
-**New test class:** extend `BaseApiTest`/`BaseMobileTest`/`BaseWebTest`
-(`com.tests.application.base`) — never hand-write a login/logout or thread-state-cleanup
-`@BeforeMethod`/`@AfterMethod`, that's already handled once per surface in the base class. A
-class only writes its own `@BeforeMethod` when it needs a specific *starting state* (e.g.
-`loginWithSeededAccount()` then navigate somewhere, or `ensureLoggedOut()` for a spec that tests
-login itself); teardown of anything the class itself creates (a booking, an event) goes in an
-overridden `tearDownTestData()`, not a new `@AfterMethod` — the base class runs it before
-logout/cleanup automatically.
+**New scenario, existing feature:** add a `Scenario:`/`Scenario Outline:` to the relevant
+`.feature` file with whatever tags apply (surface/tier/shape/resource - see [Running
+tests](#running-tests)), then add or reuse `Given`/`When`/`Then` steps in that surface's
+`com.tests.steps.*` package. A step whose text already exists anywhere is reused automatically
+(the single `RunCucumberTest` runner loads every surface's glue together, and Cucumber matches
+by text across every step-definition class, not per-class or per-surface) - only add a new
+method when no existing step already says what you need, and give it text distinct from
+*every* other step-definition class project-wide if it reads/writes that class's own private
+fields (see `steps/api/BookingE2EFlowSteps`'s javadoc for why that matters).
+
+**New feature file:** create it under the right `features/<surface>/` directory; it's picked up
+automatically (the single `RunCucumberTest` runner already points at `features/**`) — no
+runner/glue config change needed unless the new feature introduces a step-definition package
+that doesn't exist yet.
+
+**Scenario state, not a base class:** there's no inheritance hierarchy to extend any more -
+each surface has one `*ScenarioContext` class (`steps/shared/`) holding page objects/services
+and whatever a scenario needs cleaned up afterward, constructor-injected via
+`cucumber-picocontainer` into every step-definition/hook class in that scenario. A step that
+needs a specific *starting state* (e.g. logged in, or deliberately logged out) is itself a
+`Given` step or a `Background:` — see `steps/web/EventsSteps`/`features/web/events.feature` for
+the pattern. Teardown of anything a scenario creates (a booking, an event) goes on the shared
+context (e.g. `context.createdEventId = id`) for that surface's `*Hooks` class
+(`com.tests.hooks.*`, a Cucumber `@After("@tag")` hook) to release automatically - see
+`ApiHooks`/`MobileHooks`.
 
 **New page (Web/Mobile):** extend `BasePage`/`BaseMobilePage`, expose actions returning
 `this` (chaining) or the next Page Object (real navigation). For a repeated element, extend
@@ -905,38 +1015,45 @@ bounded, thread-safe pool and always returns it on driver quit — success, fail
 — rather than caching one per thread; an earlier cached-per-thread version caused real port
 collisions on retry.
 
-**Test class instance fields are the one place this bites easily, and did.** TestNG runs every
-`@Test` method of a class on one shared instance under `parallel="methods"` — not one instance
-per thread/method — so a plain instance field a test writes in its own body and reads back
-later (typically to hand to `tearDownTestData()`) is exactly as unsafe as any other shared
-mutable state without `ThreadLocal`. Audit finding, verified live: `mvn test -Dgroups=api
--Dparallel=methods -DthreadCount=8` (the exact command this README recommends above) reliably
-reproduced two failures — `EventApiTest.gettingAnExistingEventByIdReturnsIt` and
-`EventBookingE2EFlowTest.fullEventLifecycleFromRegistrationThroughBookingToDeletionWorksEndToEnd`
-— where one thread's `createdEventId`/`createdBookingId` write was clobbered by a different
-`@Test` method running concurrently on the same class instance, before the first thread read
-it back. Beyond the flaky assertion, this had a worse silent failure mode: `tearDownTestData()`
-reads the same field after the method returns, so a lost write could make it cancel/delete a
-*different* thread's still-in-use booking/event instead of its own. `EventApiTest`,
-`BookingApiTest`, and `EventBookingE2EFlowTest` (the only classes with this pattern) now hold
-`createdEventId`/`createdBookingId` as `ThreadLocal<Integer>` instead of a plain field, same
-convention as `ApiContext`/`ConfigManager` above — confirmed clean across several repeated
-`-Dparallel=methods -DthreadCount=8` runs after the fix, where it failed nearly every run
-before.
+**Test class instance fields used to be the one place this bit easily, and did - before the
+BDD migration.** TestNG ran every `@Test` method of a class on one shared instance under
+`parallel="methods"` — not one instance per thread/method — so a plain instance field a test
+wrote in its own body and read back later (typically to hand to `tearDownTestData()`) was
+exactly as unsafe as any other shared mutable state without `ThreadLocal`. Audit finding,
+verified live: `mvn test -Dgroups=api -Dparallel=methods -DthreadCount=8` (against the old
+plain-TestNG `EventApiTest`/`EventBookingE2EFlowTest`) reliably reproduced two failures where
+one thread's `createdEventId`/`createdBookingId` write was clobbered by a different `@Test`
+method running concurrently on the same class instance, before the first thread read it back -
+worse, `tearDownTestData()` read the same field after the method returned, so a lost write
+could make it cancel/delete a *different* thread's still-in-use booking/event instead of its
+own. The fix at the time was `ThreadLocal<Integer>` fields, same convention as
+`ApiContext`/`ConfigManager` above.
 
-Validated live: `-Dparallel=classes -DthreadCount=4` with genuinely concurrent Chrome/Firefox
-sessions and API calls (distinct thread names/overlapping timestamps in
-`logs/framework.log`) across the `com.tests.tests.api` classes; and a real Android emulator + iOS
-simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via overlapping
-`POST /session` requests in Appium's own server log.
+**Cucumber's own execution model closed this class of bug outright, not just worked around
+it.** `cucumber-picocontainer` creates one fresh instance of every step-definition class (and
+its `ApiScenarioContext`) per scenario - never shared across threads or reused across
+scenarios - so `steps/api/BookingE2EFlowSteps`' `createdBookingId`/`createdEventId` are plain
+`int` fields today, not `ThreadLocal`, and are correct under `-Dparallel=methods` by
+construction. This is a genuine simplification the migration surfaced, not merely a port of the
+old workaround.
+
+Validated live: `-Dcucumber.filter.tags="@api" -Ddataproviderthreadcount=6` with genuinely
+concurrent API calls across 10 real `TestNG-PoolService-N` threads (confirmed by grepping thread
+names straight out of `logs/framework.log`, not assumed from `-D` flags alone - see [Parallel
+execution](#parallel-execution) for why `-DthreadCount` itself turned out not to matter); and
+two real, simultaneously-booted iOS simulators both allocated distinct `wdaLocalPort`s and used
+concurrently via `-Dcucumber.filter.tags="@mobile" -Dmobile.platform=ios
+-Ddataproviderthreadcount=2` pooling across `MobileDevicePool`, confirmed via the device name
+alternating across `Allocated wdaLocalPort ... for device '...'` log lines from real, distinct
+threads.
 
 ## Troubleshooting
 
 | Symptom | Cause & fix |
 |---|---|
-| Mobile fails with `SessionNotCreated` | Two distinct causes, same exception type. **No emulator/Appium server running at all** — start both, or exclude `mobile`. **Server running but wrong base path** (message says `Response code 404`, not a connection failure) — Appium is up but not serving `/wd/hub` (its 2.x/3.x default is the bare `/` root); confirm with `curl http://127.0.0.1:4723/wd/hub/status` (should be `200`) and restart with `appium --base-path /wd/hub` if it isn't — see [Setup](#setup). |
-| `-Dgroups=X` runs zero tests but still `BUILD SUCCESS` | `X` isn't a real group tag — see the [group taxonomy table](#running-tests) (`smoke`/`sanity`, `api`/`web`/`mobile`, `positive`/`negative`/`e2e`, `auth`/`events`/`bookings`/`system`). Check the printed test count. |
-| `@BeforeMethod` missing `alwaysRun = true` under `-Dgroups=X` | Can't happen silently any more — `BeforeMethodAlwaysRunListener` fails the suite at start-of-run with the exact `Class#method` if this is ever missing (see Listeners). |
+| Mobile fails with `SessionNotCreated` | Two distinct causes, same exception type. **No emulator/Appium server running at all** — start both, or exclude mobile (`-Dcucumber.filter.tags="not @mobile"`). **Server running but wrong base path** (message says `Response code 404`, not a connection failure) — Appium is up but not serving `/wd/hub` (its 2.x/3.x default is the bare `/` root); confirm with `curl http://127.0.0.1:4723/wd/hub/status` (should be `200`) and restart with `appium --base-path /wd/hub` if it isn't — see [Setup](#setup). |
+| `-Dcucumber.filter.tags="@x"` runs zero scenarios but still `BUILD SUCCESS` | `@x` isn't a real tag — see the [tag taxonomy table](#running-tests) (`@smoke`/`@sanity`, `@api`/`@web`/`@mobile`, `@positive`/`@negative`/`@e2e`, `@auth`/`@events`/`@bookings`/`@system`). Check the printed test count. |
+| A framework-internal `@BeforeMethod` missing `alwaysRun = true` under a tag filter | Can't happen silently any more — `BeforeMethodAlwaysRunListener` fails the suite at start-of-run with the exact `Class#method` if this is ever missing (see Listeners). Cucumber's own `@Before`/`@After` hooks aren't affected by this at all - they run per their own tag expression regardless of `-Dcucumber.filter.tags`. |
 | A report shows secret values in plain text | Expected by default — masking is off unless enabled (see Secrets). Turn it on for a run you intend to share: `mvn test -Dmasking.enabled=true ...` (or `MASKING_ENABLED=true`). CI always masks regardless of this flag. |
 | Masking looks missing on a new log/report line despite `-Dmasking.enabled=true` | Shouldn't happen when masking is on — CONSOLE/FILE/Extent/Allure parameters, and the API report, all mask every line/value unconditionally once enabled (see Reporting). If it does, that line went through some other sink entirely (e.g. a raw `System.out.println`, or a custom appender bypassing `logback.xml`'s pattern), not a missed `.mask()` call. |
 | Two masked values, want to know if they're the same secret | Compare the `********-xxxxxxxx` suffix — same secret always produces the same fingerprint. |
@@ -949,6 +1066,7 @@ simulator launching concurrently in `MultiDeviceParallelTest`, confirmed via ove
 (Web/Mobile), `reports/api/index.html` (API - see [API Report](#api-report)), `allure-results/`
 (`allure serve allure-results`), `target/screenshots/`, `target/surefire-reports/`.
 
-**Debug from an IDE:** any test class/method is a plain TestNG entity — right-click > Debug
-works directly. From the CLI: `mvn test -Dtest=... -Dmaven.surefire.debug`, then attach on
-`localhost:5005`.
+**Debug from an IDE:** most IDEs with Cucumber/Gherkin support let you right-click a `Scenario:`
+in a `.feature` file and Debug it directly (breakpoints in the matching step-definition method
+work as normal); otherwise right-click the single `RunCucumberTest` runner class to debug
+everything. From the CLI: `mvn test -Dmaven.surefire.debug`, then attach on `localhost:5005`.
